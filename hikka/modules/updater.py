@@ -1,8 +1,7 @@
 # ©️ Dan Gazizullin, 2021-2023
-# This file is a part of Hikka Userbot
-# 🌐 https://github.com/hikariatama/Hikka
-# You can redistribute it and/or modify it under the terms of the GNU AGPLv3
-# 🔑 https://www.gnu.org/licenses/agpl-3.0.html
+# Modified by Alia-Ether for VANDA (universal branch support)
+# This file is a part of VANDA Userbot
+# 🌐 https://github.com/Alia-Ether/VANDA
 
 import asyncio
 import contextlib
@@ -132,8 +131,6 @@ class UpdaterMod(loader.Module):
         handler.setLevel(logging.CRITICAL)
 
         for client in self.allclients:
-            # Terminate main loop of all running clients
-            # Won't work if not all clients are ready
             if client is not message.client:
                 await client.disconnect()
 
@@ -156,14 +153,14 @@ class UpdaterMod(loader.Module):
             repo = Repo.init(os.path.dirname(utils.get_base_dir()))
             origin = repo.create_remote("origin", self.config["GIT_ORIGIN_URL"])
             origin.fetch()
-            repo.create_head("master", origin.refs.master)
-            repo.heads.master.set_tracking_branch(origin.refs.master)
-            repo.heads.master.checkout(True)
+            current_branch = version.branch
+            repo.create_head(current_branch, origin.refs[current_branch])
+            repo.heads[current_branch].set_tracking_branch(origin.refs[current_branch])
+            repo.heads[current_branch].checkout(True)
             return False
 
     @staticmethod
     def req_common():
-        # Now we have downloaded new code, install requirements
         logger.debug("Installing new requirements...")
         try:
             subprocess.run(
@@ -189,8 +186,18 @@ class UpdaterMod(loader.Module):
         try:
             args = utils.get_args_raw(message)
             current = utils.get_git_hash()
+            current_branch = version.branch
+            repo = git.Repo(utils.get_base_dir())
+            
+            # Проверяем, совпадает ли локальная ветка с version.branch
+            if repo.active_branch.name != current_branch:
+                logger.warning(f"Switching from {repo.active_branch.name} to {current_branch}")
+                repo.git.checkout(current_branch)
+                await self.restart_common(message)
+                return
+            
             upcoming = next(
-                git.Repo().iter_commits(f"origin/{version.branch}", max_count=1)
+                repo.iter_commits(f"origin/{current_branch}", max_count=1)
             ).hexsha
             if (
                 "-f" in args
@@ -222,9 +229,21 @@ class UpdaterMod(loader.Module):
         msg_obj: typing.Union[InlineCall, Message],
         hard: bool = False,
     ):
-        # We don't really care about asyncio at this point, as we are shutting down
+        current_branch = version.branch
+        
+        # Проверяем ветку перед обновлением
+        try:
+            repo = git.Repo(utils.get_base_dir())
+            if repo.active_branch.name != current_branch:
+                logger.warning(f"Branch mismatch, switching to {current_branch}")
+                repo.git.checkout(current_branch)
+                await self.restart_common(msg_obj)
+                return
+        except Exception as e:
+            logger.debug(f"Branch check: {e}")
+
         if hard:
-            os.system(f"cd {utils.get_base_dir()} && cd .. && git reset --hard HEAD")
+            os.system(f"cd {utils.get_base_dir()} && cd .. && git fetch --all && git reset --hard origin/{current_branch}")
 
         try:
             if "LAVHOST" in os.environ:
@@ -272,6 +291,9 @@ class UpdaterMod(loader.Module):
         )
 
     async def client_ready(self):
+        # Проверяем синхронизацию ветки при старте
+        await self._sync_branch()
+        
         if self.get("selfupdatemsg") is not None:
             try:
                 await self.update_complete()
@@ -287,6 +309,25 @@ class UpdaterMod(loader.Module):
             logger.exception("Failed to add folder!")
 
         self.set("do_not_create", True)
+
+    async def _sync_branch(self):
+        """Синхронизирует локальную ветку с version.branch"""
+        try:
+            repo = git.Repo(utils.get_base_dir())
+            target_branch = version.branch
+            
+            if repo.active_branch.name != target_branch:
+                logger.info(f"Switching from {repo.active_branch.name} to {target_branch}")
+                repo.git.checkout(target_branch)
+                
+                # Обновляем до последнего коммита
+                repo.git.pull("origin", target_branch)
+                
+                # Перезапускаем бота после смены ветки
+                logger.info("Branch switched, restarting...")
+                await self.restart_common(await self._client.get_messages(self.tg_id, 1))
+        except Exception as e:
+            logger.debug(f"Branch sync error: {e}")
 
     async def _add_folder(self):
         folders = await self._client(GetDialogFiltersRequest())
@@ -353,7 +394,7 @@ class UpdaterMod(loader.Module):
                                 1697279580,
                                 1679998924,
                                 2410964167,
-                            ]  # official vanda chats
+                            ]
                         ],
                         emoticon="🐱",
                         exclude_peers=[],
