@@ -117,7 +117,7 @@ class Presets(loader.Module):
     async def _menu(self):
         await self.inline.bot.send_photo(
             self._client.tg_id,
-            'https://imgur.com/a/7xwuOEt.png',
+            'https://i.pinimg.com/736x/68/ca/e2/68cae24cbc741f7594049285e2a2a463.jpg',
             caption=self.strings('welcome'),
             reply_markup=self.inline.generate_markup(self._markup),
         )
@@ -209,7 +209,7 @@ class Presets(loader.Module):
         """| Packs of modules to load"""
         await self.inline.form(
             message=message,
-            photo='https://imgur.com/a/SF0MPmQ.png',
+            photo='https://i.pinimg.com/736x/68/ca/e2/68cae24cbc741f7594049285e2a2a463.jpg',
             text=self.strings('welcome').replace('/presets', self.get_prefix() + 'presets'),
             reply_markup=self._markup,
         )

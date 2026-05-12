@@ -1,5 +1,5 @@
 # VANDA Changelog
-## 🐧 VANDA 1.6.8
+## 🐧 VANDA 1.7.0
 
 - Finally renamed to VANDA and new Emoji
 - many changes and improvements

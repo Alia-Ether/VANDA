@@ -108,7 +108,6 @@ class RemoteStorage:
 
             await asyncio.sleep(5)
 
-
     @staticmethod
     def _parse_url(url: str) -> typing.Tuple[str, str, str]:
         """
@@ -140,6 +139,11 @@ class RemoteStorage:
         :return: Module source code.
         """
         url, repo, module_name = self._parse_url(url)
+
+        git_hash = utils.get_git_hash()
+        if git_hash is None or git_hash is False:
+            git_hash = ""
+
         try:
             r = await utils.run_sync(
                 requests.get,
@@ -148,7 +152,7 @@ class RemoteStorage:
                 headers={
                     "User-Agent": "VANDA Userbot",
                     "X-Hikka-Version": ".".join(map(str, __version__)),
-                    "X-Hikka-Commit-SHA": utils.get_git_hash(),
+                    "X-Hikka-Commit-SHA": str(git_hash),
                     "X-Hikka-User": str(self._client.tg_id),
                 },
             )

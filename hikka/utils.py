@@ -946,7 +946,7 @@ def get_named_platform() -> str:
         return "🐳 Docker"
 
     if main.IS_TERMUX:
-        return "🕶 Termux"
+        return "💎 VPS"
 
     if main.IS_CODESPACES:
         return "🐈‍⬛ Codespaces"

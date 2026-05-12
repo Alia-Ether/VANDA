@@ -1,4 +1,4 @@
-"""Loads and registers modules"""
+"""Loads and registers modules with trust check"""
 
 # ©️ Dan Gazizullin, 2021-2023
 # This file is a part of Hikka Userbot
@@ -22,6 +22,7 @@ import sys
 import time
 import typing
 import uuid
+import tempfile
 from collections import ChainMap
 from importlib.machinery import ModuleSpec
 from urllib.parse import urlparse
@@ -39,6 +40,31 @@ from ..types import CoreOverwriteError, CoreUnloadError
 
 logger = logging.getLogger(__name__)
 
+TRUSTED_DEVS = [
+    "@FrontendVSCode",
+    "@hikariatama",
+    "@Python_Javs",
+    "@NEBULASoftware",
+    "@ETHERION_official",
+]
+
+TRUSTED_LINKS = [
+    "tg://chat?id=3767066236",
+    "tg://chat?id=2362604203",
+    "tg://chat?id=3837206192",
+    "tg://user?id=8174117949",
+    "https://t.me/Python_Javs",
+    "https://t.me/NEBULASoftware",
+    "https://t.me/ETHERION_official",
+    "https://raw.githubusercontent.com/Alia-Ether/Hikka/refs/heads/main",
+    "https://raw.githubusercontent.com/Puthon-javs/my_module.hikka/refs/heads/main",
+]
+
+DEFAULT_REPO = "https://raw.githubusercontent.com/Alia-Ether/Hikka/refs/heads/main"
+SECONDARY_REPO = "https://raw.githubusercontent.com/Puthon-javs/my_module.hikka/refs/heads/main"
+
+OVERWRITE_IMAGE = "https://i.pinimg.com/736x/56/4b/ff/564bffbec8e597023f82b747e2ff61d8.jpg"
+
 
 class FakeOne:
     def __eq__(self, other):
@@ -55,49 +81,384 @@ MODULE_LOADING_SUCCESS = 1
 
 @loader.tds
 class LoaderMod(loader.Module):
-    """Loads modules"""
+    strings = {
+        "name": "Loader",
+        "trusted_source": "✅ Доверенный источник",
+        "untrusted_install_message": "\n\n🍇 <b>Важно знать</b>\n\nВы установили модуль из непроверенного источника 🌸\n\nМы не несем ответственности за:\n▫️ Состояние устройства\n▫️ Сохранность аккаунта\n▫️ Потерю данных",
+        "overwrite_warning": "<blockquote>😖 <b>Этот модуль попытался перезаписать встроенную команду</b> <code>{}{}</code>\n\n🍇 <i>Это не ошибка, а мера безопасности, требуемая для предотвращения замены команд встроенных модулей всяким хламом. Не сообщайте о ней в support чате</i></blockquote>",
+        "confirm_overwrite": "✅ Подтвердить перезапись",
+        "close_btn": "❌ Отмена",
+        "overwrite_success": "✅ Перезапись выполнена успешно!",
+        "overwrite_error": "❌ Ошибка при перезаписи: {}",
+        "usage_re": "⚠️ Использование:\n.re raw <ссылка>\n.re file",
+        "need_raw_url": "⚠️ Укажи raw-ссылку на модуль",
+        "invalid_mode": "⚠️ Неверный режим. Используй raw или file",
+        "overwrite_in_progress": "🔄 Выполняется перезапись...",
+        "download_error": "❌ Ошибка загрузки: {}",
+        "no_file_or_reply": "⚠️ Нет файла или реплая на файл",
+        "file_read_error": "❌ Ошибка чтения файла: {}",
+        "cannot_get_code": "❌ Не удалось получить код модуля",
+        "searching_modules": "🔍 Ищу модуль в репозиториях...",
+        "available_modules": "📦 Доступные модули\n\n☁️ {}\n\n{}",
+        "loading_modules": "Loading modules: {}",
+        "module_not_found": "❌ Модуль не найден в репозиториях",
+        "downloading_module": "📥 Устанавливаю <code>{}</code>...",
+        "download_failed": "❌ Не удалось загрузить модуль",
+        "loading_from_file": "📥 Загружаю модуль из файла...",
+        "invalid_encoding": "❌ Неверная кодировка файла",
+        "save_module_prompt": "💾 Сохранить модуль в файловую систему?",
+        "save_yes": "✅ Да, сохранить",
+        "save_no": "❌ Нет, не сохранять",
+        "save_always": "💾 Всегда сохранять",
+        "save_never": "🚫 Никогда не сохранять",
+        "ffmpeg_required": "🎬 Требуется ffmpeg\nУстановите: apt install ffmpeg",
+        "inline_not_initialized": "🔘 Inline не инициализирован\nВозможно, бот не запущен",
+        "hikka_version_required": "⚠️ Требуется Hikka v{} или новее",
+        "update_button": "🔄 Обновить",
+        "cancel_button": "❌ Отмена",
+        "install_deps": "📦 Устанавливаю зависимости:\n{}",
+        "termux_error": "⚠️ Ошибка установки в Termux\nПопробуйте установить вручную",
+        "deps_error": "⚠️ Ошибка установки зависимостей",
+        "load_error": "😖 {}",
+        "module_load_error": "❌ Ошибка загрузки модуля",
+        "requires_approval": "⏳ Модуль {} требует подтверждения\nКанал: {}\nПричина: {}",
+        "self_unload": "👋 Модуль выгрузил сам себя\nПричина: {}",
+        "self_suspend": "🥶 Модуль приостановлен\nПричина: {}",
+        "init_error": "❌ Ошибка при инициализации модуля",
+        "module_loaded_template": "🍇 Модуль <code>{}</code> загружен {}{}\n\n<blockquote>{}{}</blockquote>{}{}",
+        "no_description": "Нет описания",
+        "too_many_commands_template": "🍇 Модуль <code>{}</code> загружен {}{}\n\n<blockquote>{}{}</blockquote>{}{}",
+        "subscribed": "✅ Подписался!",
+        "not_subscribed": "❌ Не подписался",
+        "specify_module": "⚠️ Укажи имя модуля",
+        "cannot_unload_library": "📚 Нельзя выгрузить библиотеку",
+        "cannot_unload_core": "❌ Нельзя выгрузить core-модуль\n{}",
+        "unloaded_modules": "✅ Выгружены модули: {}",
+        "nothing_unloaded": "❌ Ничего не выгружено",
+        "clear_modules_confirm": "⚠️ Вы уверены, что хотите удалить ВСЕ модули?\n\nПосле удаления потребуется перезагрузка юзербота",
+        "delete_all": "✅ Да, удалить всё",
+        "cancel": "❌ Нет, отмена",
+        "all_modules_deleted": "🗑️ Все модули удалены\n🔄 Перезагрузка...",
+        "specify_module_mlcmd": "⚠️ Укажи имя модуля",
+        "module_not_found_mlcmd": "❌ Модуль не найден",
+        "module_info": "📦 Модуль: <code>{}</code>\n📝 Описание: {}\n🔧 Команд: {}\n",
+        "exact_not_found": "\n⚠️ Точное совпадение не найдено",
+        "module_get_error": "❌ Ошибка получения модуля",
+        "specify_repo_url": "⚠️ Укажи ссылку на репозиторий\nПример: .addrepo https://example.com/repo",
+        "invalid_repo": "❌ Невалидный репозиторий\n(нет full.txt или пустой список)",
+        "repo_already_added": "📁 Репозиторий уже добавлен\n{}",
+        "repo_added": "✅ Репозиторий добавлен\n{}",
+        "specify_repo_del": "⚠️ Укажи ссылку на репозиторий",
+        "repo_not_found": "❌ Репозиторий не найден",
+        "repo_deleted": "🗑️ Репозиторий удалён\n{}",
+        "save_all_modules": "💾 Буду сохранять все модули",
+        "joined_channel": "🍇 Joined <a href=\"https://t.me/{}\">{}</a>",
+        "file_source": "файл",
+        "direct_link": "прямая ссылка: {}",
+        "repository": "репозиторий: {}",
+        "restart_required": "🔄 Требуется перезагрузка после установки {}",
+        "installing": "📥 Устанавливаю <code>{}</code>...",
+        "developer_label": "\n🫶 Разработчик: {}",
+        "description_prefix": "ℹ️ {}",
+        "info_prefix": "🍇 Модуль <code>{}</code> загружен {}{}",
+        "blockquote_start": "<blockquote>",
+        "blockquote_end": "</blockquote>",
+        "too_many_commands": "⚠️ Слишком много команд для отображения\n",
+    }
 
-    strings = {"name": "Loader"}
+    strings_ua = {
+        "trusted_source": "✅ Довірене джерело",
+        "untrusted_install_message": "\n\n🍇 <b>Важливо знати</b>\n\nВи встановили модуль з неперевіреного джерела 🌸\n\nМи не несемо відповідальності за:\n▫️ Стан пристрою\n▫️ Збереження акаунта\n▫️ Втрату даних",
+        "overwrite_warning": "<blockquote>😖 <b>Цей модуль спробував перезаписати вбудовану команду</b> <code>{}{}</code>\n\n🍇 <i>Це не помилка, а захід безпеки, необхідний для запобігання заміни команд вбудованих модулів усіляким мотлохом. Не повідомляйте про це в support чаті</i></blockquote>",
+        "confirm_overwrite": "✅ Підтвердити перезапис",
+        "close_btn": "❌ Скасувати",
+        "overwrite_success": "✅ Перезапис виконано успішно!",
+        "overwrite_error": "❌ Помилка при перезаписі: {}",
+        "usage_re": "⚠️ Використання:\n.re raw <посилання>\n.re file",
+        "need_raw_url": "⚠️ Вкажи raw-посилання на модуль",
+        "invalid_mode": "⚠️ Невірний режим. Використовуй raw або file",
+        "overwrite_in_progress": "🔄 Виконується перезапис...",
+        "download_error": "❌ Помилка завантаження: {}",
+        "no_file_or_reply": "⚠️ Немає файлу або реплая на файл",
+        "file_read_error": "❌ Помилка читання файлу: {}",
+        "cannot_get_code": "❌ Не вдалося отримати код модуля",
+        "searching_modules": "🔍 Шукаю модуль в репозиторіях...",
+        "available_modules": "📦 Доступні модулі\n\n☁️ {}\n\n{}",
+        "module_not_found": "❌ Модуль не знайдено в репозиторіях",
+        "downloading_module": "📥 Встановлюю <code>{}</code>...",
+        "download_failed": "❌ Не вдалося завантажити модуль",
+        "loading_from_file": "📥 Завантажую модуль з файлу...",
+        "invalid_encoding": "❌ Невірне кодування файлу",
+        "save_module_prompt": "💾 Зберегти модуль у файлову систему?",
+        "save_yes": "✅ Так, зберегти",
+        "save_no": "❌ Ні, не зберігати",
+        "save_always": "💾 Завжди зберігати",
+        "save_never": "🚫 Ніколи не зберігати",
+        "ffmpeg_required": "🎬 Потрібен ffmpeg\nВстановіть: apt install ffmpeg",
+        "inline_not_initialized": "🔘 Inline не ініціалізовано\nМожливо, бот не запущено",
+        "hikka_version_required": "⚠️ Потрібна Hikka v{} або новіша",
+        "update_button": "🔄 Оновити",
+        "cancel_button": "❌ Скасувати",
+        "install_deps": "📦 Встановлюю залежності:\n{}",
+        "termux_error": "⚠️ Помилка встановлення в Termux\nСпробуйте встановити вручну",
+        "deps_error": "⚠️ Помилка встановлення залежностей",
+        "load_error": "😖 {}",
+        "module_load_error": "❌ Помилка завантаження модуля",
+        "requires_approval": "⏳ Модуль {} вимагає підтвердження\nКанал: {}\nПричина: {}",
+        "self_unload": "👋 Модуль вивантажив сам себе\nПричина: {}",
+        "self_suspend": "🥶 Модуль призупинено\nПричина: {}",
+        "init_error": "❌ Помилка при ініціалізації модуля",
+        "module_loaded_template": "🍇 Модуль <code>{}</code> завантажено {}{}\n\n<blockquote>{}{}</blockquote>{}{}",
+        "no_description": "Немає опису",
+        "too_many_commands_template": "🍇 Модуль <code>{}</code> завантажено {}{}\n\n<blockquote>{}{}</blockquote>{}{}",
+        "subscribed": "✅ Підписався!",
+        "not_subscribed": "❌ Не підписався",
+        "specify_module": "⚠️ Вкажи ім'я модуля",
+        "cannot_unload_library": "📚 Не можна вивантажити бібліотеку",
+        "cannot_unload_core": "❌ Не можна вивантажити core-модуль\n{}",
+        "unloaded_modules": "✅ Вивантажено модулі: {}",
+        "nothing_unloaded": "❌ Нічого не вивантажено",
+        "clear_modules_confirm": "⚠️ Ви впевнені, що хочете видалити ВСІ модулі?\n\nПісля видалення потрібне перезавантаження юзербота",
+        "delete_all": "✅ Так, видалити все",
+        "cancel": "❌ Ні, скасувати",
+        "all_modules_deleted": "🗑️ Всі модулі видалено\n🔄 Перезавантаження...",
+        "specify_module_mlcmd": "⚠️ Вкажи ім'я модуля",
+        "module_not_found_mlcmd": "❌ Модуль не знайдено",
+        "module_info": "📦 Модуль: <code>{}</code>\n📝 Опис: {}\n🔧 Команд: {}\n",
+        "exact_not_found": "\n⚠️ Точного збігу не знайдено",
+        "module_get_error": "❌ Помилка отримання модуля",
+        "specify_repo_url": "⚠️ Вкажи посилання на репозиторій\nПриклад: .addrepo https://example.com/repo",
+        "invalid_repo": "❌ Невірний репозиторій\n(немає full.txt або порожній список)",
+        "repo_already_added": "📁 Репозиторій вже додано\n{}",
+        "repo_added": "✅ Репозиторій додано\n{}",
+        "specify_repo_del": "⚠️ Вкажи посилання на репозиторій",
+        "repo_not_found": "❌ Репозиторій не знайдено",
+        "repo_deleted": "🗑️ Репозиторій видалено\n{}",
+        "save_all_modules": "💾 Буду зберігати всі модулі",
+        "joined_channel": "🍇 Joined <a href=\"https://t.me/{}\">{}</a>",
+        "file_source": "файл",
+        "direct_link": "пряме посилання: {}",
+        "repository": "репозиторій: {}",
+        "restart_required": "🔄 Потрібне перезавантаження після встановлення {}",
+        "installing": "📥 Встановлюю <code>{}</code>...",
+        "developer_label": "\n🫶 Розробник: {}",
+        "description_prefix": "ℹ️ {}",
+        "info_prefix": "🍇 Модуль <code>{}</code> завантажено {}{}",
+        "blockquote_start": "<blockquote>",
+        "blockquote_end": "</blockquote>",
+        "too_many_commands": "⚠️ Занадто багато команд для відображення\n",
+    }
+
+    strings_en = {
+        "trusted_source": "✅ Trusted source",
+        "untrusted_install_message": "\n\n🍇 <b>Important to know</b>\n\nYou have installed a module from an untrusted source 🌸\n\nWe are not responsible for:\n▫️ Your device\n▫️ Your account\n▫️ Data loss",
+        "overwrite_warning": "<blockquote>😖 <b>This module attempted to overwrite built-in command</b> <code>{}{}</code>\n\n🍇 <i>This is not an error, but a security measure required to prevent replacing built-in module commands with junk. Do not report this in the support chat</i></blockquote>",
+        "confirm_overwrite": "✅ Confirm overwrite",
+        "close_btn": "❌ Cancel",
+        "overwrite_success": "✅ Overwrite successful!",
+        "overwrite_error": "❌ Overwrite error: {}",
+        "usage_re": "⚠️ Usage:\n.re raw <link>\n.re file",
+        "need_raw_url": "⚠️ Provide raw link to module",
+        "invalid_mode": "⚠️ Invalid mode. Use raw or file",
+        "overwrite_in_progress": "🔄 Overwriting...",
+        "download_error": "❌ Download error: {}",
+        "no_file_or_reply": "⚠️ No file or reply to file",
+        "file_read_error": "❌ File read error: {}",
+        "cannot_get_code": "❌ Failed to get module code",
+        "searching_modules": "🔍 Searching for module in repositories...",
+        "available_modules": "📦 Available modules\n\n☁️ {}\n\n{}",
+        "module_not_found": "❌ Module not found in repositories",
+        "downloading_module": "📥 Installing <code>{}</code>...",
+        "download_failed": "❌ Failed to download module",
+        "loading_from_file": "📥 Loading module from file...",
+        "invalid_encoding": "❌ Invalid file encoding",
+        "save_module_prompt": "💾 Save module to filesystem?",
+        "save_yes": "✅ Yes, save",
+        "save_no": "❌ No, don't save",
+        "save_always": "💾 Always save",
+        "save_never": "🚫 Never save",
+        "ffmpeg_required": "🎬 ffmpeg required\nInstall: apt install ffmpeg",
+        "inline_not_initialized": "🔘 Inline not initialized\nPossibly bot is not running",
+        "hikka_version_required": "⚠️ Hikka v{} or newer required",
+        "update_button": "🔄 Update",
+        "cancel_button": "❌ Cancel",
+        "install_deps": "📦 Installing dependencies:\n{}",
+        "termux_error": "⚠️ Installation error in Termux\nTry installing manually",
+        "deps_error": "⚠️ Dependency installation error",
+        "load_error": "😖 {}",
+        "module_load_error": "❌ Module load error",
+        "requires_approval": "⏳ Module {} requires approval\nChannel: {}\nReason: {}",
+        "self_unload": "👋 Module unloaded itself\nReason: {}",
+        "self_suspend": "🥶 Module suspended\nReason: {}",
+        "init_error": "❌ Module initialization error",
+        "module_loaded_template": "🍇 Module <code>{}</code> loaded {}{}\n\n<blockquote>{}{}</blockquote>{}{}",
+        "no_description": "No description",
+        "too_many_commands_template": "🍇 Module <code>{}</code> loaded {}{}\n\n<blockquote>{}{}</blockquote>{}{}",
+        "subscribed": "✅ Subscribed!",
+        "not_subscribed": "❌ Not subscribed",
+        "specify_module": "⚠️ Specify module name",
+        "cannot_unload_library": "📚 Cannot unload library",
+        "cannot_unload_core": "❌ Cannot unload core module\n{}",
+        "unloaded_modules": "✅ Unloaded modules: {}",
+        "nothing_unloaded": "❌ Nothing unloaded",
+        "clear_modules_confirm": "⚠️ Are you sure you want to delete ALL modules?\n\nReboot required after deletion",
+        "delete_all": "✅ Yes, delete all",
+        "cancel": "❌ No, cancel",
+        "all_modules_deleted": "🗑️ All modules deleted\n🔄 Rebooting...",
+        "specify_module_mlcmd": "⚠️ Specify module name",
+        "module_not_found_mlcmd": "❌ Module not found",
+        "module_info": "📦 Module: <code>{}</code>\n📝 Description: {}\n🔧 Commands: {}\n",
+        "exact_not_found": "\n⚠️ Exact match not found",
+        "module_get_error": "❌ Error getting module",
+        "specify_repo_url": "⚠️ Specify repository URL\nExample: .addrepo https://example.com/repo",
+        "invalid_repo": "❌ Invalid repository\n(no full.txt or empty list)",
+        "repo_already_added": "📁 Repository already added\n{}",
+        "repo_added": "✅ Repository added\n{}",
+        "specify_repo_del": "⚠️ Specify repository URL",
+        "repo_not_found": "❌ Repository not found",
+        "repo_deleted": "🗑️ Repository deleted\n{}",
+        "save_all_modules": "💾 Will save all modules",
+        "joined_channel": "🍇 Joined <a href=\"https://t.me/{}\">{}</a>",
+        "file_source": "file",
+        "direct_link": "direct link: {}",
+        "repository": "repository: {}",
+        "restart_required": "🔄 Restart required after installing {}",
+        "installing": "📥 Installing <code>{}</code>...",
+        "developer_label": "\n🫶 Developer: {}",
+        "description_prefix": "ℹ️ {}",
+        "info_prefix": "🍇 Module <code>{}</code> loaded {}{}",
+        "blockquote_start": "<blockquote>",
+        "blockquote_end": "</blockquote>",
+        "too_many_commands": "⚠️ Too many commands to display\n",
+    }
+
+    strings_de = {
+        "trusted_source": "✅ Vertrauenswürdige Quelle",
+        "untrusted_install_message": "\n\n🍇 <b>Wichtig zu wissen</b>\n\nSie haben ein Modul aus einer nicht vertrauenswürdigen Quelle installiert 🌸\n\nWir übernehmen keine Verantwortung für:\n▫️ Ihr Gerät\n▫️ Ihren Account\n▫️ Datenverlust",
+        "overwrite_warning": "<blockquote>😖 <b>Dieses Modul versuchte, den eingebauten Befehl zu überschreiben</b> <code>{}{}</code>\n\n🍇 <i>Dies ist kein Fehler, sondern eine Sicherheitsmaßnahme, um zu verhindern, dass eingebaute Modulbefehle durch Müll ersetzt werden. Melden Sie dies nicht im Support-Chat</i></blockquote>",
+        "confirm_overwrite": "✅ Überschreiben bestätigen",
+        "close_btn": "❌ Abbrechen",
+        "overwrite_success": "✅ Überschreiben erfolgreich!",
+        "overwrite_error": "❌ Fehler beim Überschreiben: {}",
+        "usage_re": "⚠️ Verwendung:\n.re raw <Link>\n.re file",
+        "need_raw_url": "⚠️ Raw-Link zum Modul angeben",
+        "invalid_mode": "⚠️ Ungültiger Modus. Verwenden Sie raw oder file",
+        "overwrite_in_progress": "🔄 Überschreiben...",
+        "download_error": "❌ Download-Fehler: {}",
+        "no_file_or_reply": "⚠️ Keine Datei oder Antwort auf Datei",
+        "file_read_error": "❌ Datei-Lesefehler: {}",
+        "cannot_get_code": "❌ Modulcode konnte nicht abgerufen werden",
+        "searching_modules": "🔍 Suche Modul in Repositories...",
+        "available_modules": "📦 Verfügbare Module\n\n☁️ {}\n\n{}",
+        "module_not_found": "❌ Modul nicht in Repositories gefunden",
+        "downloading_module": "📥 Installiere <code>{}</code>...",
+        "download_failed": "❌ Modul konnte nicht heruntergeladen werden",
+        "loading_from_file": "📥 Lade Modul aus Datei...",
+        "invalid_encoding": "❌ Ungültige Dateikodierung",
+        "save_module_prompt": "💾 Modul im Dateisystem speichern?",
+        "save_yes": "✅ Ja, speichern",
+        "save_no": "❌ Nein, nicht speichern",
+        "save_always": "💾 Immer speichern",
+        "save_never": "🚫 Nie speichern",
+        "ffmpeg_required": "🎬 ffmpeg erforderlich\nInstallieren: apt install ffmpeg",
+        "inline_not_initialized": "🔘 Inline nicht initialisiert\nBot läuft möglicherweise nicht",
+        "hikka_version_required": "⚠️ Hikka v{} oder neuer erforderlich",
+        "update_button": "🔄 Aktualisieren",
+        "cancel_button": "❌ Abbrechen",
+        "install_deps": "📦 Installiere Abhängigkeiten:\n{}",
+        "termux_error": "⚠️ Installationsfehler in Termux\nVersuchen Sie manuelle Installation",
+        "deps_error": "⚠️ Fehler bei der Abhängigkeitsinstallation",
+        "load_error": "😖 {}",
+        "module_load_error": "❌ Modul-Ladefehler",
+        "requires_approval": "⏳ Modul {} erfordert Bestätigung\nKanal: {}\nGrund: {}",
+        "self_unload": "👋 Modul entlud sich selbst\nGrund: {}",
+        "self_suspend": "🥶 Modul ausgesetzt\nGrund: {}",
+        "init_error": "❌ Modul-Initialisierungsfehler",
+        "module_loaded_template": "🍇 Modul <code>{}</code> geladen {}{}\n\n<blockquote>{}{}</blockquote>{}{}",
+        "no_description": "Keine Beschreibung",
+        "too_many_commands_template": "🍇 Modul <code>{}</code> geladen {}{}\n\n<blockquote>{}{}</blockquote>{}{}",
+        "subscribed": "✅ Abonniert!",
+        "not_subscribed": "❌ Nicht abonniert",
+        "specify_module": "⚠️ Modulnamen angeben",
+        "cannot_unload_library": "📚 Bibliothek kann nicht entladen werden",
+        "cannot_unload_core": "❌ Kernmodul kann nicht entladen werden\n{}",
+        "unloaded_modules": "✅ Entladene Module: {}",
+        "nothing_unloaded": "❌ Nichts entladen",
+        "clear_modules_confirm": "⚠️ Sind Sie sicher, dass Sie ALLE Module löschen möchten?\n\nNeustart nach dem Löschen erforderlich",
+        "delete_all": "✅ Ja, alle löschen",
+        "cancel": "❌ Nein, abbrechen",
+        "all_modules_deleted": "🗑️ Alle Module gelöscht\n🔄 Neustart...",
+        "specify_module_mlcmd": "⚠️ Modulnamen angeben",
+        "module_not_found_mlcmd": "❌ Modul nicht gefunden",
+        "module_info": "📦 Modul: <code>{}</code>\n📝 Beschreibung: {}\n🔧 Befehle: {}\n",
+        "exact_not_found": "\n⚠️ Genaue Übereinstimmung nicht gefunden",
+        "module_get_error": "❌ Fehler beim Abrufen des Moduls",
+        "specify_repo_url": "⚠️ Repository-URL angeben\nBeispiel: .addrepo https://example.com/repo",
+        "invalid_repo": "❌ Ungültiges Repository\n(keine full.txt oder leere Liste)",
+        "repo_already_added": "📁 Repository bereits hinzugefügt\n{}",
+        "repo_added": "✅ Repository hinzugefügt\n{}",
+        "specify_repo_del": "⚠️ Repository-URL angeben",
+        "repo_not_found": "❌ Repository nicht gefunden",
+        "repo_deleted": "🗑️ Repository gelöscht\n{}",
+        "save_all_modules": "💾 Werde alle Module speichern",
+        "joined_channel": "🍇 Joined <a href=\"https://t.me/{}\">{}</a>",
+        "file_source": "Datei",
+        "direct_link": "direkter Link: {}",
+        "repository": "Repository: {}",
+        "restart_required": "🔄 Neustart nach Installation von {} erforderlich",
+        "installing": "📥 Installiere <code>{}</code>...",
+        "developer_label": "\n🫶 Entwickler: {}",
+        "description_prefix": "ℹ️ {}",
+        "info_prefix": "🍇 Modul <code>{}</code> geladen {}{}",
+        "blockquote_start": "<blockquote>",
+        "blockquote_end": "</blockquote>",
+        "too_many_commands": "⚠️ Zu viele Befehle zum Anzeigen\n",
+    }
 
     def __init__(self):
         self.fully_loaded = False
         self._links_cache = {}
         self._storage: RemoteStorage = None
+        self._pending_overwrite = {}
 
         self.config = loader.ModuleConfig(
             loader.ConfigValue(
                 "MODULES_REPO",
-                "https://raw.githubusercontent.com/FrontendVSCode/modules/main",
-                lambda: self.strings("repo_config_doc"),
+                DEFAULT_REPO,
+                lambda: "Main repository with modules",
                 validator=loader.validators.Link(),
             ),
             loader.ConfigValue(
                 "ADDITIONAL_REPOS",
-                [],
-                lambda: self.strings("add_repo_config_doc"),
+                [SECONDARY_REPO],
+                lambda: "Additional repositories",
                 validator=loader.validators.Series(validator=loader.validators.Link()),
             ),
             loader.ConfigValue(
                 "share_link",
-                doc=lambda: self.strings("share_link_doc"),
+                doc=lambda: "Share module links",
                 validator=loader.validators.Boolean(),
             ),
             loader.ConfigValue(
                 "basic_auth",
                 None,
-                lambda: self.strings("basic_auth_doc"),
+                lambda: "Basic auth for repositories",
                 validator=loader.validators.Hidden(
                     loader.validators.RegExp(r"^.*:.*$")
                 ),
+            ),
+            loader.ConfigValue(
+                "only_trusted",
+                False,
+                lambda: "Only allow modules from trusted sources (security risk if disabled)",
+                validator=loader.validators.Boolean(),
             ),
         )
 
     async def _async_init(self):
         modules = list(
             filter(
-                lambda x: not x.startswith(
-                    "https://raw.githubusercontent.com/FrontendVSCode/modules/main"
-                ),
+                lambda x: not x.startswith(DEFAULT_REPO),
                 utils.array_sum(
                     map(
                         lambda x: list(x.values()),
@@ -106,7 +467,7 @@ class LoaderMod(loader.Module):
                 ),
             )
         )
-        logger.debug("Modules: %s", modules)
+        # logger.debug(self.strings("loading_modules"), modules)
         asyncio.ensure_future(self._storage.preload(modules))
 
     async def client_ready(self):
@@ -171,13 +532,209 @@ class LoaderMod(loader.Module):
             },
         )
 
+    def _get_img(self, code: str) -> typing.Optional[str]:
+        match = re.search(r'#\s*img\s*"(.+?)"', code)
+        return match.group(1).strip() if match else None
+
+    def _is_trusted(self, developer: typing.Optional[str]) -> bool:
+        if not developer:
+            return False
+        dev_clean = developer.strip().lstrip('@').lower()
+        for trusted in TRUSTED_DEVS:
+            if dev_clean == trusted.lower().lstrip('@'):
+                return True
+        return False
+
+    async def _send_overwrite_warning(self, message: Message, target_command: str, is_trusted: bool = True):
+        error_text = self.strings("overwrite_warning").format(
+            utils.escape_html(self.get_prefix()),
+            utils.escape_html(target_command)
+        )
+        
+        reply_markup = None
+        if is_trusted:
+            reply_markup = [
+                [
+                    {"text": self.strings("confirm_overwrite"), "callback": self._inline_confirm_overwrite},
+                    {"text": self.strings("close_btn"), "action": "close"},
+                ]
+            ]
+        
+        try:
+            r = requests.get(OVERWRITE_IMAGE, timeout=10)
+            if r.status_code == 200:
+                img_path = tempfile.mktemp(suffix=".jpg")
+                with open(img_path, "wb") as f:
+                    f.write(r.content)
+                await self._client.send_file(
+                    utils.get_chat_id(message),
+                    img_path,
+                    caption=error_text,
+                    reply_to=getattr(message, "reply_to_msg_id", None),
+                    reply_markup=reply_markup,
+                )
+                os.remove(img_path)
+                return True
+        except Exception:
+            pass
+        
+        await self.inline.form(
+            error_text,
+            message=message,
+            reply_markup=reply_markup,
+        )
+        return True
+
+    async def _inline_confirm_overwrite(self, call: InlineCall):
+        await call.answer("✅ Подтверждено")
+        
+        if not hasattr(call, '_pending_overwrite_data'):
+            await call.edit(self.strings("close_btn"))
+            return
+        
+        data = call._pending_overwrite_data
+        
+        if data.get("target_command") == "Loader":
+            await call.edit("❌ Модуль Loader не может быть перезаписан.")
+            return
+        
+        await call.edit(self.strings("overwrite_in_progress"))
+        
+        target_command = data.get("target_command")
+        with contextlib.suppress(Exception):
+            await self.allmodules.unload_module(target_command)
+        
+        try:
+            spec = ModuleSpec(
+                f"hikka.modules.overwrite_{uuid.uuid4()}",
+                loader.StringLoader(data["doc"], "<overwrite>"),
+                origin=data["origin"],
+            )
+            instance = await self.allmodules.register_module(
+                spec,
+                f"hikka.modules.overwrite_{uuid.uuid4()}",
+                data["origin"],
+                save_fs=data["save_fs"],
+            )
+            self.allmodules.send_config_one(instance)
+            await self.allmodules.send_ready_one(instance, no_self_unload=True, from_dlmod=True)
+            await call.edit(self.strings("overwrite_success"))
+        except Exception as err:
+            await call.edit(self.strings("overwrite_error").format(utils.escape_html(str(err))))
+
+    async def _handle_core_overwrite(self, message: Message, e: CoreOverwriteError, doc: str, origin: str, save_fs: bool, is_trusted: bool = True):
+        message._pending_overwrite_data = {
+            "doc": doc,
+            "origin": origin,
+            "save_fs": save_fs,
+            "target_command": e.target,
+        }
+        await self._send_overwrite_warning(message, e.target, is_trusted=is_trusted)
+
+    @loader.command(alias="re")
+    async def rename(self, message: Message):
+        cmd_text = utils.get_args_raw(message)
+        await message.delete()
+        
+        args = cmd_text.split()
+        
+        if len(args) < 1:
+            await utils.answer(message, self.strings("usage_re"))
+            return
+        
+        mode = args[0].lower()
+        
+        if mode == "raw":
+            if len(args) < 2:
+                await utils.answer(message, self.strings("need_raw_url"))
+                return
+            url = " ".join(args[1:])
+            await self._perform_overwrite(message, url=url)
+        elif mode == "file":
+            await self._perform_overwrite(message, file_mode=True)
+        else:
+            await utils.answer(message, self.strings("invalid_mode"))
+
+    async def _perform_overwrite(self, message: Message, url: str = None, file_mode: bool = False):
+        await utils.answer(message, self.strings("overwrite_in_progress"))
+        
+        doc = None
+        origin = None
+        
+        if url:
+            try:
+                r = requests.get(url, timeout=30)
+                if r.status_code != 200:
+                    await utils.answer(message, self.strings("download_error").format(r.status_code))
+                    return
+                doc = r.text
+                origin = url
+            except Exception as e:
+                await utils.answer(message, self.strings("download_error").format(utils.escape_html(str(e))))
+                return
+        elif file_mode:
+            msg = message if message.file else (await message.get_reply_message())
+            if msg is None or msg.media is None:
+                await utils.answer(message, self.strings("no_file_or_reply"))
+                return
+            
+            try:
+                doc_bytes = await msg.download_media(bytes)
+                doc = doc_bytes.decode()
+                origin = "<file>"
+            except Exception as e:
+                await utils.answer(message, self.strings("file_read_error").format(utils.escape_html(str(e))))
+                return
+        
+        if not doc:
+            await utils.answer(message, self.strings("cannot_get_code"))
+            return
+        
+        try:
+            node = ast.parse(doc)
+            class_name = next(
+                n.name
+                for n in node.body
+                if isinstance(n, ast.ClassDef)
+                and any(
+                    isinstance(base, ast.Attribute) and base.value.id == "Module"
+                    or isinstance(base, ast.Name) and base.id == "Module"
+                    for base in n.bases
+                )
+            )
+        except Exception:
+            class_name = None
+        
+        if class_name:
+            with contextlib.suppress(Exception):
+                await self.allmodules.unload_module(class_name)
+        
+        try:
+            module_name = f"hikka.modules.overwrite_{uuid.uuid4()}"
+            spec = ModuleSpec(
+                module_name,
+                loader.StringLoader(doc, f"<overwrite {origin}>"),
+                origin=origin,
+            )
+            instance = await self.allmodules.register_module(
+                spec,
+                module_name,
+                origin,
+                save_fs=True,
+            )
+            self.allmodules.send_config_one(instance)
+            await self.allmodules.send_ready_one(instance, no_self_unload=True, from_dlmod=True)
+            await utils.answer(message, self.strings("overwrite_success"))
+        except Exception as err:
+            await utils.answer(message, self.strings("overwrite_error").format(utils.escape_html(str(err))))
+
     @loader.command(alias="dlm")
     async def dlmod(self, message: Message, force_pm: bool = False):
         if args := utils.get_args(message):
             args = args[0]
 
             await utils.answer(
-                message, self.strings("finding_module_in_repos")
+                message, self.strings("searching_modules")
             )
 
             if (
@@ -189,37 +746,19 @@ class LoaderMod(loader.Module):
             if self.fully_loaded:
                 self.update_modules_in_db()
         else:
-            await self.inline.list(
-                message,
-                [
-                    self.strings("avail_header")
-                    + f"\n☁️ {repo.strip('/')}\n\n"
-                    + "\n".join(
-                        [
-                            " | ".join(chunk)
-                            for chunk in utils.chunks(
-                                [
-                                    f"<code>{i}</code>"
-                                    for i in sorted(
-                                        [
-                                            utils.escape_html(
-                                                i.split("/")[-1].split(".")[0]
-                                            )
-                                            for i in mods.values()
-                                        ]
-                                    )
-                                ],
-                                5,
-                            )
-                        ]
-                    )
-                    for repo, mods in (await self.get_repo_list()).items()
-                ],
-            )
+            modules_list = []
+            for repo, mods in (await self.get_repo_list()).items():
+                mod_names = sorted(
+                    [utils.escape_html(i.split("/")[-1].split(".")[0]) for i in mods.values()]
+                )
+                chunks = "\n".join([" | ".join(chunk) for chunk in utils.chunks(mod_names, 5)])
+                modules_list.append(self.strings("available_modules").format(repo.strip('/'), chunks))
+            
+            await self.inline.list(message, modules_list)
 
     async def _get_modules_to_load(self):
         todo = self.get("loaded_modules", {})
-        logger.debug("Loading modules: %s", todo)
+        logger.debug(self.strings("loading_modules"), todo)
         return todo
 
     async def _get_repo(self, repo: str) -> str:
@@ -257,17 +796,19 @@ class LoaderMod(loader.Module):
         self,
         only_primary: bool = False,
     ) -> dict:
-        return {
-            repo: {
-                f"Mod/{repo_id}/{i}": f'{repo.strip("/")}/{link}.py'
-                for i, link in enumerate(set(await self._get_repo(repo)))
-            }
-            for repo_id, repo in enumerate(
-                [self.config["MODULES_REPO"]]
-                + ([] if only_primary else self.config["ADDITIONAL_REPOS"])
-            )
-            if repo.startswith("http")
-        }
+        repos = [self.config["MODULES_REPO"]]
+        if not only_primary:
+            repos += self.config["ADDITIONAL_REPOS"]
+        
+        result = {}
+        for repo_id, repo in enumerate(repos):
+            if not repo.startswith("http"):
+                continue
+            modules = {}
+            for i, link in enumerate(set(await self._get_repo(repo))):
+                modules[f"Mod/{repo_id}/{i}"] = f'{repo.strip("/")}/{link}.py'
+            result[repo] = modules
+        return result
 
     async def get_links_list(self) -> typing.List[str]:
         links = await self.get_repo_list()
@@ -292,8 +833,10 @@ class LoaderMod(loader.Module):
         try:
             blob_link = False
             module_name = module_name.strip()
+            source = None
             if urlparse(module_name).netloc:
                 url = module_name
+                source = self.strings("direct_link").format(url)
                 if re.match(
                     r"^(https:\/\/github\.com\/.*?\/.*?\/blob\/.*\.py)|"
                     r"(https:\/\/gitlab\.com\/.*?\/.*?\/-\/blob\/.*\.py)$",
@@ -303,24 +846,25 @@ class LoaderMod(loader.Module):
                     blob_link = True
             else:
                 url = await self._find_link(module_name)
+                source = self.strings("repository").format(self.config['MODULES_REPO'])
 
                 if not url:
                     if message is not None:
-                        await utils.answer(message, self.strings("no_module"))
+                        await utils.answer(message, self.strings("module_not_found"))
 
                     return MODULE_LOADING_FAILED
 
             if message:
                 message = await utils.answer(
                     message,
-                    self.strings("installing").format(module_name),
+                    self.strings("downloading_module").format(module_name),
                 )
 
             try:
                 r = await self._storage.fetch(url, auth=self.config["basic_auth"])
             except requests.exceptions.HTTPError:
                 if message is not None:
-                    await utils.answer(message, self.strings("no_module"))
+                    await utils.answer(message, self.strings("download_failed"))
 
                 return MODULE_LOADING_FAILED
 
@@ -330,6 +874,7 @@ class LoaderMod(loader.Module):
                 module_name,
                 url,
                 blob_link=blob_link,
+                source=source,
             )
             return MODULE_LOADING_SUCCESS
         except Exception:
@@ -347,7 +892,7 @@ class LoaderMod(loader.Module):
         if mode == "all_yes":
             self._db.set(main.__name__, "permanent_modules_fs", True)
             self._db.set(main.__name__, "disable_modules_fs", False)
-            await call.answer(self.strings("will_save_fs"))
+            await call.answer(self.strings("save_all_modules"))
             save = True
         elif mode == "all_no":
             self._db.set(main.__name__, "disable_modules_fs", True)
@@ -355,7 +900,7 @@ class LoaderMod(loader.Module):
         elif mode == "once":
             save = True
 
-        await self.load_module(doc, call, origin=path_ or "<string>", save_fs=save)
+        await self.load_module(doc, call, origin=path_ or "<string>", save_fs=save, source=self.strings("file_source"))
 
     @loader.command(alias="lm")
     async def loadmod(self, message: Message, force_pm: bool = False):
@@ -369,11 +914,11 @@ class LoaderMod(loader.Module):
         msg = message if message.file else (await message.get_reply_message())
 
         if msg is None or msg.media is None:
-            await utils.answer(message, self.strings("provide_module"))
+            await utils.answer(message, self.strings("no_file_or_reply"))
             return
 
         await utils.answer(
-            message, self.strings("loading_module_via_file")
+            message, self.strings("loading_from_file")
         )
 
         path_ = None
@@ -382,7 +927,7 @@ class LoaderMod(loader.Module):
         try:
             doc = doc.decode()
         except UnicodeDecodeError:
-            await utils.answer(message, self.strings("bad_unicode"))
+            await utils.answer(message, self.strings("invalid_encoding"))
             return
 
         if (
@@ -396,34 +941,34 @@ class LoaderMod(loader.Module):
         ):
             if message.file:
                 await message.edit("")
-                message = await message.respond("🐧", reply_to=utils.get_topic(message))
+                message = await message.respond("🍇", reply_to=utils.get_topic(message))
 
             if await self.inline.form(
-                self.strings("module_fs"),
+                self.strings("save_module_prompt"),
                 message=message,
                 reply_markup=[
                     [
                         {
-                            "text": self.strings("save"),
+                            "text": self.strings("save_yes"),
                             "callback": self._inline__load,
                             "args": (doc, path_, "once"),
                         },
                         {
-                            "text": self.strings("no_save"),
+                            "text": self.strings("save_no"),
                             "callback": self._inline__load,
                             "args": (doc, path_, "no"),
                         },
                     ],
                     [
                         {
-                            "text": self.strings("save_for_all"),
+                            "text": self.strings("save_always"),
                             "callback": self._inline__load,
                             "args": (doc, path_, "all_yes"),
                         }
                     ],
                     [
                         {
-                            "text": self.strings("never_save"),
+                            "text": self.strings("save_never"),
                             "callback": self._inline__load,
                             "args": (doc, path_, "all_no"),
                         }
@@ -442,6 +987,7 @@ class LoaderMod(loader.Module):
                     or self._db.get(main.__name__, "permanent_modules_fs", False)
                     and not self._db.get(main.__name__, "disable_modules_fs", False)
                 ),
+                source=self.strings("file_source"),
             )
         else:
             await self.load_module(
@@ -452,27 +998,24 @@ class LoaderMod(loader.Module):
                     or self._db.get(main.__name__, "permanent_modules_fs", False)
                     and not self._db.get(main.__name__, "disable_modules_fs", False)
                 ),
+                source=self.strings("file_source"),
             )
 
     async def approve_internal(
         self,
         call: InlineCall,
-        channel: "hints.EntityLike",  # type: ignore  # noqa
+        channel: "hints.EntityLike",
         event: asyncio.Event,
     ):
-        """
-        Don't you dare call it externally
-        """
         await self._client(JoinChannelRequest(channel))
         event.status = True
         event.set()
 
         await call.edit(
-            (
-                "💫 <b>Joined <a"
-                f' href="https://t.me/{channel.username}">{utils.escape_html(channel.title)}</a></b>'
+            self.strings("joined_channel").format(
+                channel.username,
+                utils.escape_html(channel.title)
             ),
-            photo="https://imgur.com/a/gWKLn7h.png",
         )
 
     async def load_module(
@@ -484,7 +1027,18 @@ class LoaderMod(loader.Module):
         did_requirements: bool = False,
         save_fs: bool = False,
         blob_link: bool = False,
+        source: str = None,
     ):
+        developer = re.search(r"# ?meta developer: ?(.+)", doc)
+        developer = developer.group(1) if developer else None
+
+        meta_name = re.search(r"# ?meta name: ?(.+)", doc)
+        meta_name = meta_name.group(1).strip() if meta_name else None
+
+        is_trusted = self._is_trusted(developer)
+
+        meta_img = self._get_img(doc)
+
         if any(
             line.replace(" ", "") == "#scope:ffmpeg" for line in doc.splitlines()
         ) and os.system("ffmpeg -version 1>/dev/null 2>/dev/null"):
@@ -497,7 +1051,7 @@ class LoaderMod(loader.Module):
             and not self.inline.init_complete
         ):
             if isinstance(message, Message):
-                await utils.answer(message, self.strings("inline_init_failed"))
+                await utils.answer(message, self.strings("inline_not_initialized"))
             return
 
         if re.search(r"# ?scope: ?hikka_min", doc):
@@ -512,25 +1066,20 @@ class LoaderMod(loader.Module):
                         m = message
 
                     await self.inline.form(
-                        self.strings("version_incompatible").format(ver),
+                        self.strings("hikka_version_required").format(ver),
                         m,
                         reply_markup=[
                             {
-                                "text": self.lookup("updater").strings("btn_update"),
+                                "text": self.strings("update_button"),
                                 "callback": self.lookup("updater").inline_update,
                             },
                             {
-                                "text": self.lookup("updater").strings("cancel"),
+                                "text": self.strings("cancel_button"),
                                 "action": "close",
                             },
                         ],
                     )
                 return
-
-        developer = re.search(r"# ?meta developer: ?(.+)", doc)
-        developer = developer.group(1) if developer else False
-
-        blob_link = self.strings("blob_link") if blob_link else ""
 
         if name is None:
             try:
@@ -563,24 +1112,16 @@ class LoaderMod(loader.Module):
         doc = geek.compat(doc)
 
         async def core_overwrite(e: CoreOverwriteError):
-            nonlocal message
-
-            with contextlib.suppress(Exception):
-                self.allmodules.modules.remove(instance)
-
-            if not message:
-                return
-
-            await utils.answer(
-                message,
-                self.strings(f"overwrite_{e.type}").format(
-                    *(
-                        (e.target,)
-                        if e.type == "module"
-                        else (utils.escape_html(self.get_prefix()), e.target)
-                    )
-                ),
-            )
+            nonlocal message, is_trusted
+            if isinstance(message, Message):
+                message._pending_overwrite_data = {
+                    "doc": doc,
+                    "origin": origin,
+                    "save_fs": save_fs,
+                    "target_command": e.target,
+                }
+                await self._send_overwrite_warning(message, e.target, is_trusted=is_trusted)
+            return
 
         try:
             try:
@@ -597,10 +1138,9 @@ class LoaderMod(loader.Module):
                 )
             except ImportError as e:
                 logger.info(
-                    "Module loading failed, attemping dependency installation (%s)",
+                    "Module loading failed, attempting dependency installation (%s)",
                     e.name,
                 )
-                # Let's try to reinstall dependencies
                 try:
                     requirements = list(
                         filter(
@@ -613,7 +1153,7 @@ class LoaderMod(loader.Module):
                     )
                 except TypeError:
                     logger.warning(
-                        "No valid pip packages specified in code, attemping"
+                        "No valid pip packages specified in code, attempting"
                         " installation from error"
                     )
                     requirements = [
@@ -633,21 +1173,15 @@ class LoaderMod(loader.Module):
                     if message is not None:
                         await utils.answer(
                             message,
-                            self.strings("requirements_restart").format(e.name),
+                            self.strings("restart_required").format(e.name),
                         )
-
                     return
 
                 if message is not None:
                     await utils.answer(
                         message,
-                        self.strings("requirements_installing").format(
-                            "\n".join(
-                                "<emoji"
-                                " document_id=4971987363145188045>▫️</emoji>"
-                                f" {req}"
-                                for req in requirements
-                            )
+                        self.strings("install_deps").format(
+                            "\n".join(f"▫️ <code>{req}</code>" for req in requirements)
                         ),
                     )
 
@@ -671,14 +1205,13 @@ class LoaderMod(loader.Module):
                         if "com.termux" in os.environ.get("PREFIX", ""):
                             await utils.answer(
                                 message,
-                                self.strings("requirements_failed_termux"),
+                                self.strings("termux_error"),
                             )
                         else:
                             await utils.answer(
                                 message,
-                                self.strings("requirements_failed"),
+                                self.strings("deps_error"),
                             )
-
                     return
 
                 importlib.invalidate_caches()
@@ -686,7 +1219,7 @@ class LoaderMod(loader.Module):
                 kwargs = utils.get_kwargs()
                 kwargs["did_requirements"] = True
 
-                return await self.load_module(**kwargs)  # Try again
+                return await self.load_module(**kwargs)
             except CoreOverwriteError as e:
                 await core_overwrite(e)
                 return
@@ -700,25 +1233,17 @@ class LoaderMod(loader.Module):
                 if message:
                     await utils.answer(
                         message,
-                        (
-                            "<emoji document_id=5454225457916420314>😖</emoji>"
-                            f" <b>{utils.escape_html(str(e))}</b>"
-                        ),
+                        self.strings("load_error").format(utils.escape_html(str(e))),
                     )
                 return
         except Exception as e:
             logger.exception("Loading external module failed due to %s", e)
-
             if message is not None:
-                await utils.answer(message, self.strings("load_failed"))
-
+                await utils.answer(message, self.strings("module_load_error"))
             return
 
         if hasattr(instance, "__version__") and isinstance(instance.__version__, tuple):
-            version = (
-                "<b><i>"
-                f" (v{'.'.join(list(map(str, list(instance.__version__))))})</i></b>"
-            )
+            version = f" (v{'.'.join(map(str, instance.__version__))})"
         else:
             version = ""
 
@@ -738,16 +1263,13 @@ class LoaderMod(loader.Module):
                                 ) = instance.hikka_wait_channel_approve
                                 message = await utils.answer(
                                     message,
-                                    self.strings("wait_channel_approve").format(
+                                    self.strings("requires_approval").format(
                                         module,
-                                        channel.username,
-                                        utils.escape_html(channel.title),
-                                        utils.escape_html(reason),
-                                        self.inline.bot_username,
+                                        channel.title,
+                                        reason
                                     ),
                                 )
                                 return
-
                         await asyncio.sleep(0.1)
 
                 task = asyncio.ensure_future(inner_proxy())
@@ -770,10 +1292,7 @@ class LoaderMod(loader.Module):
                 if message:
                     await utils.answer(
                         message,
-                        (
-                            "<emoji document_id=5454225457916420314>😖</emoji>"
-                            f" <b>{utils.escape_html(str(e))}</b>"
-                        ),
+                        self.strings("load_error").format(utils.escape_html(str(e))),
                     )
                 return
             except loader.SelfUnload as e:
@@ -787,10 +1306,7 @@ class LoaderMod(loader.Module):
                 if message:
                     await utils.answer(
                         message,
-                        (
-                            "<emoji document_id=5454225457916420314>😖</emoji>"
-                            f" <b>{utils.escape_html(str(e))}</b>"
-                        ),
+                        self.strings("self_unload").format(utils.escape_html(str(e))),
                     )
                 return
             except loader.SelfSuspend as e:
@@ -798,18 +1314,13 @@ class LoaderMod(loader.Module):
                 if message:
                     await utils.answer(
                         message,
-                        (
-                            "🥶 <b>Module suspended itself\nReason:"
-                            f" {utils.escape_html(str(e))}</b>"
-                        ),
+                        self.strings("self_suspend").format(utils.escape_html(str(e))),
                     )
                 return
         except Exception as e:
             logger.exception("Module threw because of %s", e)
-
             if message is not None:
-                await utils.answer(message, self.strings("load_failed"))
-
+                await utils.answer(message, self.strings("init_error"))
             return
 
         instance.hikka_meta_pic = next(
@@ -831,11 +1342,11 @@ class LoaderMod(loader.Module):
         )
 
         if pack_url and (
-            transations := await self.allmodules.translator.load_module_translations(
+            translations := await self.allmodules.translator.load_module_translations(
                 pack_url
             )
         ):
-            instance.strings.external_strings = transations
+            instance.strings.external_strings = translations
 
         for alias, cmd in self.lookup("settings").get("aliases", {}).items():
             if cmd in instance.commands:
@@ -844,7 +1355,7 @@ class LoaderMod(loader.Module):
         try:
             modname = instance.strings("name")
         except (KeyError, AttributeError):
-            modname = getattr(instance, "name", instance.__class__.__name__)
+            modname = meta_name or getattr(instance, "name", instance.__class__.__name__)
 
         try:
             developer_entity = await (
@@ -868,147 +1379,64 @@ class LoaderMod(loader.Module):
         if message is None:
             return
 
-        modhelp = ""
+        trust_status = self.strings("trusted_source") if is_trusted else self.strings("untrusted_install_message")
 
+        commands_list = []
+        for _name, fun in sorted(instance.commands.items(), key=lambda x: x[0]):
+            doc_str = utils.escape_html(inspect.getdoc(fun)) if fun.__doc__ else self.strings("no_description")
+            commands_list.append(f"▫️ <code>{self.get_prefix()}{_name}</code> — {doc_str}")
+
+        commands_text = "\n".join(commands_list)
+
+        description = ""
         if instance.__doc__:
-            modhelp += (
-                "<i>\n<emoji document_id=5879813604068298387>ℹ️</emoji>"
-                f" {utils.escape_html(inspect.getdoc(instance))}</i>\n"
-            )
+            description = f"ℹ️ {utils.escape_html(inspect.getdoc(instance))}\n\n"
 
-        subscribe = ""
-        subscribe_markup = None
+        dev_str = ""
+        if developer:
+            dev_str = self.strings("developer_label").format(utils.escape_html(developer))
 
-        depends_from = []
-        for key in dir(instance):
-            value = getattr(instance, key)
-            if isinstance(value, loader.Library):
-                depends_from.append(
-                    "<emoji document_id=5197195523794157505>▫️</emoji>"
-                    " <code>{}</code> <b>{}</b> <code>{}</code>".format(
-                        value.__class__.__name__,
-                        self.strings("by"),
-                        (
-                            value.developer
-                            if isinstance(getattr(value, "developer", None), str)
-                            else "Unknown"
-                        ),
-                    )
-                )
-
-        depends_from = (
-            self.strings("depends_from").format("\n".join(depends_from))
-            if depends_from
-            else ""
+        final_message = self.strings("module_loaded_template").format(
+            utils.escape_html(modname),
+            utils.ascii_face(),
+            version,
+            self.strings("blockquote_start"),
+            description + commands_text + "\n" + self.strings("blockquote_end"),
+            trust_status,
+            dev_str
         )
 
-        def loaded_msg(use_subscribe: bool = True):
-            nonlocal \
-                modname, \
-                version, \
-                modhelp, \
-                developer, \
-                origin, \
-                subscribe, \
-                blob_link, \
-                depends_from
-            return self.strings("loaded").format(
-                modname.strip(),
-                version,
-                utils.ascii_face(),
-                modhelp,
-                developer if not subscribe or not use_subscribe else "",
-                depends_from,
-                (
-                    self.strings("modlink").format(origin)
-                    if origin != "<string>" and self.config["share_link"]
-                    else ""
-                ),
-                blob_link,
-                subscribe if use_subscribe else "",
-            )
-
-        if developer:
-            if developer.startswith("@") and developer not in self.get(
-                "do_not_subscribe", []
-            ):
-                if (
-                    developer_entity
-                    and getattr(developer_entity, "left", True)
-                    and self._db.get(main.__name__, "suggest_subscribe", True)
-                ):
-                    subscribe = self.strings("suggest_subscribe").format(
-                        f"@{utils.escape_html(developer_entity.username)}"
+        if meta_img:
+            try:
+                r = requests.get(meta_img, timeout=10)
+                if r.status_code == 200:
+                    img_path = tempfile.mktemp(suffix=".jpg")
+                    with open(img_path, "wb") as f:
+                        f.write(r.content)
+                    await self._client.send_file(
+                        utils.get_chat_id(message),
+                        img_path,
+                        caption=final_message,
+                        reply_to=getattr(message, "reply_to_msg_id", None),
                     )
-                    subscribe_markup = [
-                        {
-                            "text": self.strings("subscribe"),
-                            "callback": self._inline__subscribe,
-                            "args": (
-                                developer_entity.id,
-                                functools.partial(loaded_msg, use_subscribe=False),
-                                True,
-                            ),
-                        },
-                        {
-                            "text": self.strings("no_subscribe"),
-                            "callback": self._inline__subscribe,
-                            "args": (
-                                developer,
-                                functools.partial(loaded_msg, use_subscribe=False),
-                                False,
-                            ),
-                        },
-                    ]
-
-            developer = self.strings("developer").format(
-                utils.escape_html(developer)
-                if isinstance(developer_entity, Channel)
-                else f"<code>{utils.escape_html(developer)}</code>"
-            )
-        else:
-            developer = ""
-
-        if any(
-            line.replace(" ", "") == "#scope:disable_onload_docs"
-            for line in doc.splitlines()
-        ):
-            await utils.answer(message, loaded_msg(), reply_markup=subscribe_markup)
-            return
-
-        for _name, fun in sorted(
-            instance.commands.items(),
-            key=lambda x: x[0],
-        ):
-            modhelp += "\n{} <code>{}{}</code> {}".format(
-                "<emoji document_id=5197195523794157505>▫️</emoji>",
-                utils.escape_html(self.get_prefix()),
-                _name,
-                (
-                    utils.escape_html(inspect.getdoc(fun))
-                    if fun.__doc__
-                    else self.strings("undoc")
-                ),
-            )
-
-        if self.inline.init_complete:
-            for _name, fun in sorted(
-                instance.inline_handlers.items(),
-                key=lambda x: x[0],
-            ):
-                modhelp += self.strings("ihandler").format(
-                    f"@{self.inline.bot_username} {_name}",
-                    (
-                        utils.escape_html(inspect.getdoc(fun))
-                        if fun.__doc__
-                        else self.strings("undoc")
-                    ),
-                )
+                    os.remove(img_path)
+                    return
+            except Exception:
+                pass
 
         try:
-            await utils.answer(message, loaded_msg(), reply_markup=subscribe_markup)
+            await utils.answer(message, final_message)
         except MediaCaptionTooLongError:
-            await message.reply(loaded_msg(False))
+            short_message = self.strings("too_many_commands_template").format(
+                utils.escape_html(modname),
+                utils.ascii_face(),
+                version,
+                self.strings("blockquote_start"),
+                description + self.strings("too_many_commands") + self.strings("blockquote_end"),
+                trust_status,
+                dev_str
+            )
+            await message.reply(short_message)
 
     async def _inline__subscribe(
         self,
@@ -1030,13 +1458,13 @@ class LoaderMod(loader.Module):
     @loader.command(alias="ulm")
     async def unloadmod(self, message: Message):
         if not (args := utils.get_args_raw(message)):
-            await utils.answer(message, self.strings("no_class"))
+            await utils.answer(message, self.strings("specify_module"))
             return
 
         instance = self.lookup(args)
 
         if issubclass(instance.__class__, loader.Library):
-            await utils.answer(message, self.strings("cannot_unload_lib"))
+            await utils.answer(message, self.strings("cannot_unload_library"))
             return
 
         try:
@@ -1044,7 +1472,7 @@ class LoaderMod(loader.Module):
         except CoreUnloadError as e:
             await utils.answer(
                 message,
-                self.strings("unload_core").format(e.module),
+                self.strings("cannot_unload_core").format(e.module),
             )
             return
 
@@ -1058,27 +1486,23 @@ class LoaderMod(loader.Module):
                 },
             )
 
-        msg = (
-            self.strings("unloaded").format(
-                "<emoji document_id=5784993237412351403>✅</emoji>",
-                ", ".join(
-                    [(mod[:-3] if mod.endswith("Mod") else mod) for mod in worked]
-                ),
+        if worked:
+            msg = self.strings("unloaded_modules").format(
+                ', '.join([(mod[:-3] if mod.endswith('Mod') else mod) for mod in worked])
             )
-            if worked
-            else self.strings("not_unloaded")
-        )
+        else:
+            msg = self.strings("nothing_unloaded")
 
         await utils.answer(message, msg)
 
     @loader.command()
     async def clearmodules(self, message: Message):
         await self.inline.form(
-            self.strings("confirm_clearmodules"),
+            self.strings("clear_modules_confirm"),
             message,
             reply_markup=[
                 {
-                    "text": self.strings("clearmodules"),
+                    "text": self.strings("delete_all"),
                     "callback": self._inline__clearmodules,
                 },
                 {
@@ -1087,62 +1511,6 @@ class LoaderMod(loader.Module):
                 },
             ],
         )
-
-    @loader.command()
-    async def addrepo(self, message: Message):
-        if not (args := utils.get_args_raw(message)) or (
-            not utils.check_url(args) and not utils.check_url(f"https://{args}")
-        ):
-            await utils.answer(message, self.strings("no_repo"))
-            return
-
-        if args.endswith("/"):
-            args = args[:-1]
-
-        if not args.startswith("https://") and not args.startswith("http://"):
-            args = f"https://{args}"
-
-        try:
-            r = await utils.run_sync(
-                requests.get,
-                f"{args}/full.txt",
-                auth=(
-                    tuple(self.config["basic_auth"].split(":", 1))
-                    if self.config["basic_auth"]
-                    else None
-                ),
-            )
-            r.raise_for_status()
-            if not r.text.strip():
-                raise ValueError
-        except Exception:
-            await utils.answer(message, self.strings("no_repo"))
-            return
-
-        if args in self.config["ADDITIONAL_REPOS"]:
-            await utils.answer(message, self.strings("repo_exists").format(args))
-            return
-
-        self.config["ADDITIONAL_REPOS"] += [args]
-
-        await utils.answer(message, self.strings("repo_added").format(args))
-
-    @loader.command()
-    async def delrepo(self, message: Message):
-        if not (args := utils.get_args_raw(message)) or not utils.check_url(args):
-            await utils.answer(message, self.strings("no_repo"))
-            return
-
-        if args.endswith("/"):
-            args = args[:-1]
-
-        if args not in self.config["ADDITIONAL_REPOS"]:
-            await utils.answer(message, self.strings("repo_not_exists"))
-            return
-
-        self.config["ADDITIONAL_REPOS"].remove(args)
-
-        await utils.answer(message, self.strings("repo_deleted").format(args))
 
     async def _inline__clearmodules(self, call: InlineCall):
         self.set("loaded_modules", {})
@@ -1184,17 +1552,14 @@ class LoaderMod(loader.Module):
             await self.lookup("Updater").full_restart_complete(self._secure_boot)
 
     def flush_cache(self) -> int:
-        """Flush the cache of links to modules"""
         count = sum(map(len, self._links_cache.values()))
         self._links_cache = {}
         return count
 
     def inspect_cache(self) -> int:
-        """Inspect the cache of links to modules"""
         return sum(map(len, self._links_cache.values()))
 
     async def reload_core(self) -> int:
-        """Forcefully reload all core modules"""
         self.fully_loaded = False
 
         if self._secure_boot:
@@ -1219,14 +1584,9 @@ class LoaderMod(loader.Module):
 
     @loader.command()
     async def mlcmd(self, message: Message):
-        """| send module via file"""
         if not (args := utils.get_args_raw(message)):
-            await utils.answer(message, self.strings("args"))
+            await utils.answer(message, self.strings("specify_module_mlcmd"))
             return
-
-        await utils.answer(
-            message, self.strings("ml_load_module")
-        )
 
         exact = True
         if not (
@@ -1265,7 +1625,7 @@ class LoaderMod(loader.Module):
                     None,
                 )
             ):
-                await utils.answer(message, self.strings("404"))
+                await utils.answer(message, self.strings("module_not_found_mlcmd"))
                 return
 
             exact = False
@@ -1273,36 +1633,21 @@ class LoaderMod(loader.Module):
         try:
             module = self.lookup(class_name)
             sys_module = inspect.getmodule(module)
+            
+            module_doc = inspect.getdoc(module) or self.strings("no_description")
+            commands_count = len(module.commands)
+            
+            text = self.strings("module_info").format(
+                utils.escape_html(class_name),
+                utils.escape_html(module_doc),
+                commands_count
+            )
+            if not exact:
+                text += self.strings("exact_not_found")
+                
         except Exception:
-            await utils.answer(message, self.strings("404"))
+            await utils.answer(message, self.strings("module_get_error"))
             return
-
-        link = module.__origin__
-
-        text = (
-            f"<b>🧳 {utils.escape_html(class_name)}</b>"
-            if not utils.check_url(link)
-            else (
-                f'📼 <b><a href="{link}">Link</a> for'
-                f" {utils.escape_html(class_name)}:</b>"
-                f' <code>{link}</code>\n\n{self.strings("not_exact") if not exact else ""}'
-            )
-        )
-
-        text = (
-            self.strings("link").format(
-                class_name=utils.escape_html(class_name),
-                url=link,
-                not_exact=self.strings("not_exact") if not exact else "",
-                prefix=utils.escape_html(self.get_prefix()),
-            )
-            if utils.check_url(link)
-            else self.strings("file").format(
-                class_name=utils.escape_html(class_name),
-                not_exact=self.strings("not_exact") if not exact else "",
-                prefix=utils.escape_html(self.get_prefix()),
-            )
-        )
 
         file = io.BytesIO(sys_module.__loader__.data)
         file.name = f"{class_name}.py"
@@ -1315,40 +1660,62 @@ class LoaderMod(loader.Module):
             reply_to=getattr(message, "reply_to_msg_id", None),
         )
 
-    def _format_result(
-        self,
-        result: dict,
-        query: str,
-        no_translate: bool = False,
-    ) -> str:
-        commands = "\n".join(
-            [
-                f"▫️ <code>{utils.escape_html(self.get_prefix())}{utils.escape_html(cmd)}</code>:"
-                f" <b>{utils.escape_html(cmd_doc)}</b>"
-                for cmd, cmd_doc in result["module"]["commands"].items()
-            ]
-        )
+    @loader.command()
+    async def addrepo(self, message: Message):
+        if not (args := utils.get_args_raw(message)) or (
+            not utils.check_url(args) and not utils.check_url(f"https://{args}")
+        ):
+            await utils.answer(message, self.strings("specify_repo_url"))
+            return
 
-        kwargs = {
-            "name": utils.escape_html(result["module"]["name"]),
-            "dev": utils.escape_html(result["module"]["dev"]),
-            "commands": commands,
-            "cls_doc": utils.escape_html(result["module"]["cls_doc"]),
-            "mhash": result["module"]["hash"],
-            "query": utils.escape_html(query),
-            "prefix": utils.escape_html(self.get_prefix()),
-        }
+        if args.endswith("/"):
+            args = args[:-1]
 
-        strings = (
-            self.strings.get("result", "en")
-            if self.config["translate"] and not no_translate
-            else self.strings("result")
-        )
+        if not args.startswith("https://") and not args.startswith("http://"):
+            args = f"https://{args}"
 
-        text = strings.format(**kwargs)
+        try:
+            r = await utils.run_sync(
+                requests.get,
+                f"{args}/full.txt",
+                auth=(
+                    tuple(self.config["basic_auth"].split(":", 1))
+                    if self.config["basic_auth"]
+                    else None
+                ),
+            )
+            r.raise_for_status()
+            if not r.text.strip():
+                raise ValueError
+        except Exception:
+            await utils.answer(message, self.strings("invalid_repo"))
+            return
 
-        if len(text) > 1980:
-            kwargs["commands"] = "..."
-            text = strings.format(**kwargs)
+        if args in self.config["ADDITIONAL_REPOS"]:
+            await utils.answer(message, self.strings("repo_already_added").format(args))
+            return
 
-        return text
+        self.config["ADDITIONAL_REPOS"] += [args]
+
+        await utils.answer(message, self.strings("repo_added").format(args))
+
+    @loader.command()
+    async def delrepo(self, message: Message):
+        if not (args := utils.get_args_raw(message)) or not utils.check_url(args):
+            await utils.answer(message, self.strings("specify_repo_del"))
+            return
+
+        if args.endswith("/"):
+            args = args[:-1]
+
+        if args not in self.config["ADDITIONAL_REPOS"]:
+            await utils.answer(message, self.strings("repo_not_found"))
+            return
+
+        self.config["ADDITIONAL_REPOS"].remove(args)
+
+        await utils.answer(message, self.strings("repo_deleted").format(args))
+
+
+if not hasattr(InlineCall, '_pending_overwrite_data'):
+    InlineCall._pending_overwrite_data = None

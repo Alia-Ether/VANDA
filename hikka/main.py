@@ -806,8 +806,8 @@ class Hikka:
             # diff = repo.git.log([f"HEAD..origin/{version.branch}", "--oneline"])
             # upd = "Update required" if diff else "Up-to-date"
             
-            build = "unknown"
-            upd = "Up-to-date"
+            build = "V2"
+            upd = "🧩 Up-to-date"
 
             logo = (
                 "⠉⠉⠉⠉⠁⠀⠀⠀⠀⠒⠂⠰⠤⢤⣀⡀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀\n"
@@ -825,8 +825,8 @@ class Hikka:
                 "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠱⡄⠀\n"
                 "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⢰⠀\n"
                 "⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⠀⡄\n\n"
-                f"• Build: {build[:7] if build != 'unknown' else 'unknown'}\n"
-                f"• Version: {'.'.join(list(map(str, list(__version__))))}\n"
+                f"• 🧩 Build: {build[:7] if build != 'unknown' else 'unknown'}\n"
+                f"• 🧩  Version:  {'.'.join(list(map(str, list(__version__))))}\n"
                 f"• {upd}\n"
             )
 
@@ -838,7 +838,7 @@ class Hikka:
                     else ""
                 )
                 logging.debug(
-                    "\n🐧 Hikka %s #%s (%s) started\n%s",
+                    "\n 🧩 Vanda %s #%s (%s) started\n%s",
                     ".".join(list(map(str, list(__version__)))),
                     build[:7] if build != 'unknown' else 'unknown',
                     upd,
@@ -850,7 +850,7 @@ class Hikka:
                 logging.getLogger().handlers[0].get_logid_by_client(client.tg_id),
                 "https://i.pinimg.com/736x/55/da/7d/55da7d911f9f8cac19776c882bf9cc13.jpg",
                 caption=(
-                    "🐧 <b>Hikka {} started!</b>\n\n⚙ <b>GitHub commit SHA: <a"
+                    "🧩 <b>Vanda {} started!</b>\n\n⚙ <b>GitHub commit SHA: <a"
                     ' href="https://github.com/Alia-Ether/VANDA/commit/{}">{}</a></b>\n🔎'
                     " <b>Update status: {}</b>\n<b>{}</b>".format(
                         ".".join(list(map(str, list(__version__)))),

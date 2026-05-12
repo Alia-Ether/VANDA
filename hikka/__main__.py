@@ -69,7 +69,7 @@ else:
             if tuple(map(int, hikkatl.__version__.split("."))) < (2, 0, 8):
                 raise ImportError
         except ImportError:
-            print("🔄 Installing dependencies...")
+            print("🧩 Installing dependencies...")
             deps()
             restart()
 
@@ -80,7 +80,7 @@ else:
 
         from . import main
     except ImportError as e:
-        print(f"{str(e)}\n🔄 Attempting dependencies installation... Just wait ⏱")
+        print(f"{str(e)}\n🧩 Attempting dependencies installation... Just wait ⏱")
         deps()
         restart()
 

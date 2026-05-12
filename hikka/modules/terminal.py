@@ -1,406 +1,212 @@
-#    Friendly Telegram (telegram userbot)
-#    Copyright (C) 2018-2019 The Authors
+#.        ▄▀█ █▀█ █▀▀ ▀█▀ ▄▀█
+#.        █▀█ █▄█ █▀  ░█░ █▀█
+#              © Copyright 2026
+#           https://t.me/FrontendVSCode
+#
+# 🔒      Licensed under the GNU AGPLv3
+# 🌐 https://www.gnu.org/licenses/agpl-3.0.html
 
-#    This program is free software: you can redistribute it and/or modify
-#    it under the terms of the GNU Affero General Public License as published by
-#    the Free Software Foundation, either version 3 of the License, or
-#    (at your option) any later version.
+#img "https://i.pinimg.com/736x/32/42/83/32428384c94b93cd597d0ff5429d4f97.jpg"
+# meta pic: https://i.pinimg.com/736x/32/42/83/32428384c94b93cd597d0ff5429d4f97.jpg
+# meta banner: https://i.pinimg.com/736x/32/42/83/32428384c94b93cd597d0ff5429d4f97.jpg
+# meta developer: @NEBULASoftware
+# scope: inline
+# scope: softa_only
+# scope: softa_min 1.2.10
 
-#    This program is distributed in the hope that it will be useful,
-#    but WITHOUT ANY WARRANTY; without even the implied warranty of
-#    MERCHANTABILITY or FITNESS FOR A PARTICULAR PURPOSE.  See the
-#    GNU Affero General Public License for more details.
 
-#    You should have received a copy of the GNU Affero General Public License
-#    along with this program.  If not, see <https://www.gnu.org/licenses/>.
-
-# ©️ Dan Gazizullin, 2021-2023
-# This file is a part of Hikka Userbot
-# 🌐 https://github.com/hikariatama/Hikka
-# You can redistribute it and/or modify it under the terms of the GNU AGPLv3
-# 🔑 https://www.gnu.org/licenses/agpl-3.0.html
-
-# meta developer: @bsolute
-
+from .. import loader, utils
 import asyncio
 import contextlib
 import logging
-import os
 import re
+import time
 import typing
 
 import hikkatl
-
 from .. import loader, utils
 
 logger = logging.getLogger(__name__)
 
+ANSI_RE = re.compile(r"\x1B\[[0-?]*[ -/]*[@-~]")
+
+ANSI_COLORS = {
+    "30": "black",
+    "31": "red",
+    "32": "green",
+    "33": "orange",
+    "34": "blue",
+    "35": "purple",
+    "36": "teal",
+    "37": "gray",
+}
+
+
+def ansi_to_html(text: str) -> str:
+    text = ANSI_RE.sub("", text)
+
+    for code, color in ANSI_COLORS.items():
+        text = text.replace(
+            f"\x1b[{code}m",
+            f'<span style="color:{color}">',
+        )
+
+    return text.replace("\x1b[0m", "</span>")
+
 
 def hash_msg(message):
-    return f"{str(utils.get_chat_id(message))}/{str(message.id)}"
+    return f"{utils.get_chat_id(message)}/{message.id}"
 
-
-async def read_stream(func: callable, stream, delay: float):
+async def read_stream(func, stream, delay: float):
+    buf = b""
     last_task = None
-    data = b""
-    while True:
-        dat = await stream.read(1)
 
-        if not dat:
-            # EOF
+    while True:
+        data = await stream.read(1)
+
+        if not data:
             if last_task:
-                # Send all pending data
                 last_task.cancel()
-                await func(data.decode())
-                # If there is no last task there is inherently no data, so theres no point sending a blank string
+                with contextlib.suppress(Exception):
+                    await func(buf.decode(errors="ignore"))
             break
 
-        data += dat
+        buf += data
 
         if last_task:
             last_task.cancel()
 
-        last_task = asyncio.ensure_future(sleep_for_task(func, data, delay))
+        last_task = asyncio.create_task(_delayed(func, buf, delay))
 
 
-async def sleep_for_task(func: callable, data: bytes, delay: float):
+async def _delayed(func, data, delay):
     await asyncio.sleep(delay)
-    await func(data.decode())
-
+    with contextlib.suppress(Exception):
+        await func(data.decode(errors="ignore"))
 
 class MessageEditor:
-    def __init__(
-        self,
-        message: hikkatl.tl.types.Message,
-        command: str,
-        config,
-        strings,
-        request_message,
-    ):
+    def __init__(self, message, command):
         self.message = message
-        self.command = command
+        self.command = command.replace("cd ~ && ", "", 1)
+
         self.stdout = ""
         self.stderr = ""
         self.rc = None
-        self.redraws = 0
-        self.config = config
-        self.strings = strings
-        self.request_message = request_message
+        self.start = time.time()
 
-    async def update_stdout(self, stdout):
-        self.stdout = stdout
+    async def update_stdout(self, data):
+        self.stdout = data
         await self.redraw()
 
-    async def update_stderr(self, stderr):
-        self.stderr = stderr
+    async def update_stderr(self, data):
+        self.stderr = data
         await self.redraw()
 
     async def redraw(self):
-        text = self.strings("running").format(utils.escape_html(self.command))  # fmt: skip
+        elapsed = int(time.time() - self.start)
+
+        text = (
+            f"🧩 Command [ <code>{utils.escape_html(self.command)}</code> ]\n\n"
+        )
+
+        if self.stdout:
+            text += (
+                "📥 Output:\n"
+                f"<pre>{ansi_to_html(utils.escape_html(self.stdout[-3000:]))}</pre>\n"
+            )
+
+        if self.stderr:
+            text += (
+                "⚠ Error:\n"
+                f"<pre>{ansi_to_html(utils.escape_html(self.stderr[-1500:]))}</pre>\n"
+            )
 
         if self.rc is not None:
-            text += self.strings("finished").format(utils.escape_html(str(self.rc)))
+            text += (
+                f"\n📦 Time: <code>{elapsed}s</code>\n"
+                f"📌 Exit code: <code>{self.rc}</code>"
+            )
 
-        text += self.strings("stdout")
-        text += utils.escape_html(self.stdout[max(len(self.stdout) - 2048, 0) :])
-        stderr = utils.escape_html(self.stderr[max(len(self.stderr) - 1024, 0) :])
-        text += (self.strings("stderr") + stderr) if stderr else ""
-        text += self.strings("end")
+        with contextlib.suppress(Exception):
+            await utils.answer(self.message, text)
 
-        with contextlib.suppress(hikkatl.errors.rpcerrorlist.MessageNotModifiedError):
-            try:
-                self.message = await utils.answer(self.message, text)
-            except hikkatl.errors.rpcerrorlist.MessageTooLongError as e:
-                logger.error(e)
-                logger.error(text)
-        # The message is never empty due to the template header
-
-    async def cmd_ended(self, rc):
+    async def done(self, rc):
         self.rc = rc
-        self.state = 4
         await self.redraw()
-
-    def update_process(self, process):
-        pass
-
-
-class SudoMessageEditor(MessageEditor):
-    # Let's just hope these are safe to parse
-    PASS_REQ = "[sudo] password for"
-    WRONG_PASS = r"\[sudo\] password for (.*): Sorry, try again\."
-    TOO_MANY_TRIES = (r"\[sudo\] password for (.*): sudo: [0-9]+ incorrect password attempts")  # fmt: skip
-
-    def __init__(self, message, command, config, strings, request_message):
-        super().__init__(message, command, config, strings, request_message)
-        self.process = None
-        self.state = 0
-        self.authmsg = None
-
-    def update_process(self, process):
-        logger.debug("got sproc obj %s", process)
-        self.process = process
-
-    async def update_stderr(self, stderr):
-        logger.debug("stderr update " + stderr)
-        self.stderr = stderr
-        lines = stderr.strip().split("\n")
-        lastline = lines[-1]
-        lastlines = lastline.rsplit(" ", 1)
-        handled = False
-
-        if (
-            len(lines) > 1
-            and re.fullmatch(self.WRONG_PASS, lines[-2])
-            and lastlines[0] == self.PASS_REQ
-            and self.state == 1
-        ):
-            logger.debug("switching state to 0")
-            await self.authmsg.edit(self.strings("auth_failed"))
-            self.state = 0
-            handled = True
-            await asyncio.sleep(2)
-            await self.authmsg.delete()
-
-        if lastlines[0] == self.PASS_REQ and self.state == 0:
-            logger.debug("Success to find sudo log!")
-            text = self.strings("auth_needed").format(self._tg_id)
-
-            try:
-                await utils.answer(self.message, text)
-            except hikkatl.errors.rpcerrorlist.MessageNotModifiedError as e:
-                logger.debug(e)
-
-            logger.debug("edited message with link to self")
-            command = "<code>" + utils.escape_html(self.command) + "</code>"
-            user = utils.escape_html(lastlines[1][:-1])
-
-            self.authmsg = await self.message[0].client.send_message(
-                "me",
-                self.strings("auth_msg").format(command, user),
-            )
-            logger.debug("sent message to self")
-
-            self.message[0].client.remove_event_handler(self.on_message_edited)
-            self.message[0].client.add_event_handler(
-                self.on_message_edited,
-                hikkatl.events.messageedited.MessageEdited(chats=["me"]),
-            )
-
-            logger.debug("registered handler")
-            handled = True
-
-        if len(lines) > 1 and (
-            re.fullmatch(self.TOO_MANY_TRIES, lastline) and self.state in {1, 3, 4}
-        ):
-            logger.debug("password wrong lots of times")
-            await utils.answer(self.message, self.strings("auth_locked"))
-            await self.authmsg.delete()
-            self.state = 2
-            handled = True
-
-        if not handled:
-            logger.debug("Didn't find sudo log.")
-            if self.authmsg is not None:
-                await self.authmsg[0].delete()
-                self.authmsg = None
-            self.state = 2
-            await self.redraw()
-
-        logger.debug(self.state)
-
-    async def update_stdout(self, stdout):
-        self.stdout = stdout
-
-        if self.state != 2:
-            self.state = 3  # Means that we got stdout only
-
-        if self.authmsg is not None:
-            await self.authmsg.delete()
-            self.authmsg = None
-
-        await self.redraw()
-
-    async def on_message_edited(self, message):
-        # Message contains sensitive information.
-        if self.authmsg is None:
-            return
-
-        logger.debug("got message edit update in self %s", str(message.id))
-
-        if hash_msg(message) == hash_msg(self.authmsg):
-            # The user has provided interactive authentication. Send password to stdin for sudo.
-            try:
-                self.authmsg = await utils.answer(message, self.strings("auth_ongoing"))
-            except hikkatl.errors.rpcerrorlist.MessageNotModifiedError:
-                # Try to clear personal info if the edit fails
-                await message.delete()
-
-            self.state = 1
-            self.process.stdin.write(
-                message.message.message.split("\n", 1)[0].encode() + b"\n"
-            )
-
-
-class RawMessageEditor(SudoMessageEditor):
-    def __init__(
-        self,
-        message,
-        command,
-        config,
-        strings,
-        request_message,
-        show_done=False,
-    ):
-        super().__init__(message, command, config, strings, request_message)
-        self.show_done = show_done
-
-    async def redraw(self):
-        logger.debug(self.rc)
-
-        if self.rc is None:
-            text = (
-                "<code>"
-                + utils.escape_html(self.stdout[max(len(self.stdout) - 4095, 0) :])
-                + "</code>"
-            )
-        elif self.rc == 0:
-            text = (
-                "<code>"
-                + utils.escape_html(self.stdout[max(len(self.stdout) - 4090, 0) :])
-                + "</code>"
-            )
-        else:
-            text = (
-                "<code>"
-                + utils.escape_html(self.stderr[max(len(self.stderr) - 4095, 0) :])
-                + "</code>"
-            )
-
-        if self.rc is not None and self.show_done:
-            text += "\n" + self.strings("done")
-
-        logger.debug(text)
-
-        with contextlib.suppress(
-            hikkatl.errors.rpcerrorlist.MessageNotModifiedError,
-            hikkatl.errors.rpcerrorlist.MessageEmptyError,
-            ValueError,
-        ):
-            try:
-                await utils.answer(self.message, text)
-            except hikkatl.errors.rpcerrorlist.MessageTooLongError as e:
-                logger.error(e)
-                logger.error(text)
-
 
 @loader.tds
 class TerminalMod(loader.Module):
-    """Runs commands"""
+    """Terminal (EN/RU + ANSI + history + bash fix)"""
 
-    strings = {"name": "Terminal"}
+    strings = {
+        "name": "Terminal",
+
+       
+        "usage": "Usage: <code>.t python --version</code>",
+        "history": "📜 History",
+        "empty": "empty",
+
+       
+        "usage_ru": "Использование: <code>.t python --version</code>",
+        "history_ru": "📜 История",
+    }
+
+    strings_ru = {
+        "usage": "Использование: <code>.t python --version</code>",
+        "history": "📜 История",
+        "empty": "пусто",
+    }
 
     def __init__(self):
-        self.config = loader.ModuleConfig(
-            loader.ConfigValue(
-                "FLOOD_WAIT_PROTECT",
-                2,
-                lambda: self.strings("fw_protect"),
-                validator=loader.validators.Integer(minimum=0),
-            ),
-        )
-        self.activecmds = {}
+        self.history = []
+    @loader.command()
+    async def testloadcmd(self, message):
+        """Test team - replies hello"""
+        await utils.answer(message, "🧩 <blockquote>Hello! I'm a test module!</blockquote>")
 
     @loader.command()
+    async def testcheckcmd(self, message):
+        """Checking the module operation"""
+        await utils.answer(message, "🧩 <blockquote>Everything works! 🏓</blockquote>")
+
+    @loader.command(alias="t")
     async def terminalcmd(self, message):
-        await self.run_command(message, utils.get_args_raw(message))
+        args = utils.get_args_raw(message)
 
-    @loader.command()
-    async def aptcmd(self, message):
-        await self.run_command(
-            message,
-            ("apt " if os.geteuid() == 0 else "sudo -S apt ")
-            + utils.get_args_raw(message)
-            + " -y",
-            RawMessageEditor(
+        
+        if args.strip() in {"-h", "history"}:
+            hist = "\n".join(self.history[-15:]) or self.strings("empty")
+            return await utils.answer(
                 message,
-                f"apt {utils.get_args_raw(message)}",
-                self.config,
-                self.strings,
+                f"{self.strings('history')}\n<code>{hist}</code>",
+            )
+
+        if not args:
+            return await utils.answer(
                 message,
-                True,
-            ),
-        )
+                self.strings("usage"),
+            )
 
-    async def run_command(
-        self,
-        message: hikkatl.tl.types.Message,
-        cmd: str,
-        editor: typing.Optional[MessageEditor] = None,
-    ):
-        if len(cmd.split(" ")) > 1 and cmd.split(" ")[0] == "sudo":
-            needsswitch = True
+        self.history.append(args)
 
-            for word in cmd.split(" ", 1)[1].split(" "):
-                if word[0] != "-":
-                    break
+        await self.run(message, args)
 
-                if word == "-S":
-                    needsswitch = False
+    async def run(self, message, cmd):
+        full_cmd = f"bash -lc 'cd ~ && {cmd}'"
 
-            if needsswitch:
-                cmd = " ".join([cmd.split(" ", 1)[0], "-S", cmd.split(" ", 1)[1]])
-
-        sproc = await asyncio.create_subprocess_shell(
-            cmd,
-            stdin=asyncio.subprocess.PIPE,
+        proc = await asyncio.create_subprocess_shell(
+            full_cmd,
             stdout=asyncio.subprocess.PIPE,
             stderr=asyncio.subprocess.PIPE,
-            cwd=utils.get_base_dir(),
         )
 
-        if editor is None:
-            editor = SudoMessageEditor(message, cmd, self.config, self.strings, message)
-
-        editor.update_process(sproc)
-
-        self.activecmds[hash_msg(message)] = sproc
+        editor = MessageEditor(message, cmd)
 
         await editor.redraw()
 
         await asyncio.gather(
-            read_stream(
-                editor.update_stdout,
-                sproc.stdout,
-                self.config["FLOOD_WAIT_PROTECT"],
-            ),
-            read_stream(
-                editor.update_stderr,
-                sproc.stderr,
-                self.config["FLOOD_WAIT_PROTECT"],
-            ),
+            read_stream(editor.update_stdout, proc.stdout, 0.3),
+            read_stream(editor.update_stderr, proc.stderr, 0.3),
         )
 
-        await editor.cmd_ended(await sproc.wait())
-        del self.activecmds[hash_msg(message)]
-
-    @loader.command()
-    async def terminatecmd(self, message):
-        if not message.is_reply:
-            await utils.answer(message, self.strings("what_to_kill"))
-            return
-
-        if hash_msg(await message.get_reply_message()) in self.activecmds:
-            try:
-                if "-f" not in utils.get_args_raw(message):
-                    self.activecmds[
-                        hash_msg(await message.get_reply_message())
-                    ].terminate()
-                else:
-                    self.activecmds[hash_msg(await message.get_reply_message())].kill()
-            except Exception:
-                logger.exception("Killing process failed")
-                await utils.answer(message, self.strings("kill_fail"))
-            else:
-                await utils.answer(message, self.strings("killed"))
-        else:
-            await utils.answer(message, self.strings("no_cmd"))
+        await editor.done(await proc.wait())

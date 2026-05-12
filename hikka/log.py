@@ -1,6 +1,5 @@
 """Main logging part"""
 
-# пасхалка номер 3
 # ©️ Dan Gazizullin, 2021-2023
 # This file is a part of Hikka Userbot
 # 🌐 https://github.com/hikariatama/Hikka
@@ -13,8 +12,10 @@ import inspect
 import io
 import linecache
 import logging
+import os
 import re
 import sys
+import time
 import traceback
 import typing
 from logging.handlers import RotatingFileHandler
@@ -27,49 +28,97 @@ from .tl_cache import CustomTelegramClient
 from .types import BotInlineCall, Module
 from .web.debugger import WebDebugger
 
-# Monkeypatch linecache to make interactive line debugger available
-# in werkzeug web debugger
-# This is weird, but the only adequate approach
-# https://github.com/pallets/werkzeug/blob/3115aa6a6276939f5fd6efa46282e0256ff21f1a/src/werkzeug/debug/tbtools.py#L382-L416
-
 old = linecache.getlines
 
+LOG_FILE = "vanda.log"
+INTERNET_LOG_COOLDOWN = 60
+API_LOG_COOLDOWN = 300
+LOG_CLEANUP_INTERVAL = 600
 
-def getlines(filename: str, module_globals=None) -> str:
-    """
-    Get the lines for a Python source file from the cache.
-    Update the cache if it doesn't contain an entry for this file already.
+_last_internet_error_time = 0
+_last_internet_notify_time = 0
+_last_api_error_time = 0
+_last_api_notify_time = 0
+_internet_was_down = False
+_internet_notified = False
 
-    Modified version of original `linecache.getlines`, which returns the
-    source code of VANDA modules properly. This is needed for
-    interactive line debugger in werkzeug web debugger.
-    """
 
+def cleanup_logs():
     try:
-        if filename.startswith("<") and filename.endswith(">"):
-            module = filename[1:-1].split(maxsplit=1)[-1]
-            if (module.startswith("hikka.modules")) and module in sys.modules:
-                return list(
-                    map(
-                        lambda x: f"{x}\n",
-                        sys.modules[module].__loader__.get_source().splitlines(),
-                    )
-                )
+        if os.path.exists(LOG_FILE):
+            with open(LOG_FILE, 'w') as f:
+                f.write('')
     except Exception:
-        logging.debug("Can't get lines for %s", filename, exc_info=True)
-
-    return old(filename, module_globals)
+        pass
 
 
-linecache.getlines = getlines
+def should_suppress_log(record: logging.LogRecord) -> bool:
+    msg_text = record.msg % record.args if record.args else str(record.msg)
+    msg_lower = msg_text.lower()
+    
+    suppress_keywords = [
+        "traceback",
+        "file",
+        "line",
+        "aiohttp.client_exceptions",
+        "socket.gaierror",
+        "clientoserror",
+        "clientconnectorerror",
+        "exception on event loop",
+        "task exception was never retrieved",
+        "aiogram.dispatcher.dispatcher",
+        "getting updates",
+        "mtprotosender",
+    ]
+    
+    for keyword in suppress_keywords:
+        if keyword in msg_lower:
+            return True
+    return False
 
 
 def override_text(exception: Exception) -> typing.Optional[str]:
-    """Returns error-specific description if available, else `None`"""
-    if isinstance(exception, NetworkError):
-        return "✈️ <b>You have problems with internet connection on your server.</b>"
-
+    global _last_internet_error_time, _internet_was_down, _internet_notified
+    global _last_api_error_time
+    
+    current_time = time.time()
+    error_msg = str(exception).lower()
+    
+    if "network" in error_msg or "connection" in error_msg or "unreachable" in error_msg or "abort" in error_msg:
+        if (current_time - _last_internet_error_time) > INTERNET_LOG_COOLDOWN:
+            _last_internet_error_time = current_time
+            _internet_was_down = True
+            _internet_notified = False
+            return "🧩 Internet connection error"
+        else:
+            return None
+    
+    if "flood" in error_msg or "too many" in error_msg or "rate limit" in error_msg or "429" in error_msg:
+        if (current_time - _last_api_error_time) > API_LOG_COOLDOWN:
+            _last_api_error_time = current_time
+            return "🪐 IP limit error"
+        else:
+            return None
+    
+    if _internet_was_down and ("connected" in error_msg or "success" in error_msg or "authorized" in error_msg):
+        _internet_was_down = False
+        return "✅ Internet connection restored"
+    
     return None
+
+
+def periodic_cleanup():
+    async def cleanup_loop():
+        while True:
+            await asyncio.sleep(LOG_CLEANUP_INTERVAL)
+            cleanup_logs()
+    
+    try:
+        loop = asyncio.get_event_loop()
+        if loop.is_running():
+            loop.create_task(cleanup_loop())
+    except:
+        pass
 
 
 class HikkaException:
@@ -95,32 +144,6 @@ class HikkaException:
         stack: typing.Optional[typing.List[inspect.FrameInfo]] = None,
         comment: typing.Optional[typing.Any] = None,
     ) -> "HikkaException":
-        def to_hashable(dictionary: dict) -> dict:
-            dictionary = dictionary.copy()
-            for key, value in dictionary.items():
-                if isinstance(value, dict):
-                    dictionary[key] = to_hashable(value)
-                else:
-                    try:
-                        if (
-                            getattr(getattr(value, "__class__", None), "__name__", None)
-                            == "Database"
-                        ):
-                            dictionary[key] = "<Database>"
-                        elif isinstance(
-                            value,
-                            (hikkatl.TelegramClient, CustomTelegramClient),
-                        ):
-                            dictionary[key] = f"<{value.__class__.__name__}>"
-                        elif len(str(value)) > 512:
-                            dictionary[key] = f"{str(value)[:512]}..."
-                        else:
-                            dictionary[key] = str(value)
-                    except Exception:
-                        dictionary[key] = f"<{value.__class__.__name__}>"
-
-            return dictionary
-
         full_traceback = traceback.format_exc().replace(
             "Traceback (most recent call last):\n",
             "",
@@ -130,7 +153,6 @@ class HikkaException:
 
         def format_line(line: str) -> str:
             filename_, lineno_, name_ = line_regex.search(line).groups()
-
             return (
                 f"👉 <code>{utils.escape_html(filename_)}:{lineno_}</code> <b>in</b>"
                 f" <code>{utils.escape_html(name_)}</code>"
@@ -200,15 +222,6 @@ class HikkaException:
 
 
 class TelegramLogsHandler(logging.Handler):
-    """
-    Keeps 2 buffers.
-    One for dispatched messages.
-    One for unused messages.
-    When the length of the 2 together is 100
-    truncate to make them 100 together,
-    first trimming handled then unused.
-    """
-
     def __init__(self, targets: list, capacity: int):
         super().__init__(0)
         self.buffer = []
@@ -224,6 +237,8 @@ class TelegramLogsHandler(logging.Handler):
         self.capacity = capacity
         self.lvl = logging.NOTSET
         self._send_lock = asyncio.Lock()
+        self._last_internet_notify = 0
+        self._last_api_notify = 0
 
     def install_tg_log(self, mod: Module):
         if getattr(self, "_task", False):
@@ -246,7 +261,6 @@ class TelegramLogsHandler(logging.Handler):
         self.lvl = level
 
     def dump(self):
-        """Return a list of logging entries"""
         return self.handledbuffer + self.buffer
 
     def dumps(
@@ -254,7 +268,6 @@ class TelegramLogsHandler(logging.Handler):
         lvl: int = 0,
         client_id: typing.Optional[int] = None,
     ) -> typing.List[str]:
-        """Return all entries of minimum level as list of strings"""
         return [
             self.targets[0].format(record)
             for record in (self.buffer + self.handledbuffer)
@@ -265,11 +278,10 @@ class TelegramLogsHandler(logging.Handler):
     async def _show_full_trace(
         self,
         call: BotInlineCall,
-        bot: "aiogram.Bot",  # type: ignore  # noqa: F821
+        bot: "aiogram.Bot",
         item: HikkaException,
     ):
         chunks = item.message + "\n\n<b>🐧 Full traceback:</b>\n" + item.full_stack
-
         chunks = list(utils.smart_split(*hikkatl.extensions.html.parse(chunks), 4096))
 
         await call.edit(
@@ -309,7 +321,7 @@ class TelegramLogsHandler(logging.Handler):
 
     async def _start_debugger(
         self,
-        call: "InlineCall",  # type: ignore  # noqa: F821
+        call: "InlineCall",
         item: HikkaException,
     ):
         if not self.web_debugger:
@@ -325,10 +337,7 @@ class TelegramLogsHandler(logging.Handler):
         )
 
         await call.answer(
-            (
-                "Web debugger started. You can get PIN using .debugger command. \n⚠️"
-                " !DO NOT GIVE IT TO ANYONE! ⚠️"
-            ),
+            "Web debugger started. You can get PIN using .debugger command. ⚠️ !DO NOT GIVE IT TO ANYONE! ⚠️",
             show_alert=True,
         )
 
@@ -404,12 +413,8 @@ class TelegramLogsHandler(logging.Handler):
                     await self._mods[client_id].inline.bot.send_document(
                         self._mods[client_id].logchat,
                         logfile,
-                        caption=(
-                            "<b>🧳 Journals are too big to be sent as separate"
-                            " messages</b>"
-                        ),
+                        caption="<b>🧳 Journals are too big to be sent as separate messages</b>",
                     )
-
                     self._queue[client_id] = []
                     continue
 
@@ -424,6 +429,48 @@ class TelegramLogsHandler(logging.Handler):
                         )
 
     def emit(self, record: logging.LogRecord):
+        global _last_internet_notify_time, _last_api_notify_time, _internet_was_down, _internet_notified
+        
+        msg_text = record.msg % record.args if record.args else str(record.msg)
+        msg_lower = msg_text.lower()
+        current_time = time.time()
+        
+        is_network_error = any(x in msg_lower for x in ["network", "connection", "unreachable", "abort", "cannot connect"])
+        is_api_error = any(x in msg_lower for x in ["flood", "too many", "429", "rate limit"])
+        
+        if is_network_error:
+            if current_time - _last_internet_notify_time > INTERNET_LOG_COOLDOWN:
+                _last_internet_notify_time = current_time
+                _internet_was_down = True
+                _internet_notified = False
+                print("\n🧩 Internet connection error\n")
+                for mod in self._mods.values():
+                    asyncio.create_task(
+                        mod.inline.bot.send_message(
+                            mod.logchat,
+                            "🧩 <b>Internet connection error</b>"
+                        )
+                    )
+            if should_suppress_log(record):
+                return
+        
+        if is_api_error and not is_network_error:
+            if current_time - _last_api_notify_time > API_LOG_COOLDOWN:
+                _last_api_notify_time = current_time
+                print("\n🪐 IP limit error\n")
+                for mod in self._mods.values():
+                    asyncio.create_task(
+                        mod.inline.bot.send_message(
+                            mod.logchat,
+                            "🪐 <b>IP limit error</b>"
+                        )
+                    )
+            if should_suppress_log(record):
+                return
+        
+        if should_suppress_log(record):
+            return
+        
         try:
             caller = next(
                 (
@@ -453,8 +500,9 @@ class TelegramLogsHandler(logging.Handler):
                     stack=record.__dict__.get("stack", None),
                     comment=record.msg % record.args,
                 )
-
-                if not self.ignore_common or all(
+                if exc.message and ("Internet connection error" in exc.message or "IP limit error" in exc.message):
+                    self.tg_buff += [(exc, caller)]
+                elif not self.ignore_common or all(
                     field not in exc.message
                     for field in [
                         "InputPeerEmpty() does not have any entity type",
@@ -463,12 +511,7 @@ class TelegramLogsHandler(logging.Handler):
                 ):
                     self.tg_buff += [(exc, caller)]
             else:
-                self.tg_buff += [
-                    (
-                        _tg_formatter.format(record),
-                        caller,
-                    )
-                ]
+                self.tg_buff += [(_tg_formatter.format(record), caller)]
 
         if len(self.buffer) + len(self.handledbuffer) >= self.capacity:
             if self.handledbuffer:
@@ -507,7 +550,7 @@ _tg_formatter = logging.Formatter(
 )
 
 rotating_handler = RotatingFileHandler(
-    filename="vanda.log",
+    filename=LOG_FILE,
     mode="a",
     maxBytes=10 * 1024 * 1024,
     backupCount=1,
@@ -519,6 +562,9 @@ rotating_handler.setFormatter(_main_formatter)
 
 
 def init():
+    cleanup_logs()
+    periodic_cleanup()
+    
     handler = logging.StreamHandler()
     handler.setLevel(logging.INFO)
     handler.setFormatter(_main_formatter)
@@ -526,9 +572,8 @@ def init():
     logging.getLogger().addHandler(
         TelegramLogsHandler((handler, rotating_handler), 7000)
     )
-    logging.getLogger().setLevel(logging.NOTSET)
-    logging.getLogger("hikkatl").setLevel(logging.WARNING)
-    logging.getLogger("matplotlib").setLevel(logging.WARNING)
-    logging.getLogger("aiohttp").setLevel(logging.WARNING)
-    logging.getLogger("aiogram").setLevel(logging.WARNING)
-    logging.captureWarnings(True)
+    logging.getLogger().setLevel(logging.ERROR)
+    logging.getLogger("hikkatl").setLevel(logging.ERROR)
+    logging.getLogger("aiohttp").setLevel(logging.ERROR)
+    logging.getLogger("aiogram").setLevel(logging.ERROR)
+    logging.captureWarnings(False)
