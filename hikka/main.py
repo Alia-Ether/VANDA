@@ -806,7 +806,7 @@ class Hikka:
             # diff = repo.git.log([f"HEAD..origin/{version.branch}", "--oneline"])
             # upd = "Update required" if diff else "Up-to-date"
             
-            build = "V2"
+            build = "V3"
             upd = "🧩 Up-to-date"
 
             logo = (
