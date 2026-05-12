@@ -1,3 +1,4 @@
+print("👣 Starting, userbotik")
 """Main script, where all the fun starts"""
 
 #    Friendly Telegram (telegram userbot)
